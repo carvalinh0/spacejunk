@@ -100,6 +100,7 @@ spinner. You can browse and open folders while the scan runs.
 | `→` / `l` | open folder (or step into it) |
 | `←` / `h` | close folder (or jump to the parent) |
 | `Enter` / `Space` | open/close |
+| `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
 | `PgUp` `PgDn` `g` `G` | scroll / top / bottom |
 | `r` | rescan |
 | `Esc` | back to the disk list (cancels a running scan) |

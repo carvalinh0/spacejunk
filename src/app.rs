@@ -13,6 +13,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rayon::ThreadPool;
 use sysinfo::Disks;
 
+use crate::platform;
 use crate::scan::{self, Node, Progress};
 use crate::tree::{self, NONE, Row};
 use crate::update;
@@ -235,6 +236,12 @@ impl App {
             KeyCode::Char('r') => {
                 let path = view.path.clone();
                 self.start_scan(&path);
+            }
+            KeyCode::Char('o') => {
+                let path = tree::path_of(&view.root, &view.rows, view.selected);
+                self.message = platform::reveal(&path, view.selected_node().is_dir)
+                    .err()
+                    .map(|e| format!("cannot open the file manager: {e}"));
             }
             code => view.on_key(code),
         }

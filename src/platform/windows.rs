@@ -8,7 +8,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::process::CommandExt;
 use std::path::Path;
+use std::process::Command;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
@@ -156,9 +158,43 @@ pub fn is_packaged() -> bool {
     err != APPMODEL_ERROR_NO_PACKAGE
 }
 
+/// Explorer opens a folder, or selects a file inside its folder.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "same signature on every platform; Linux can fail"
+)]
+pub fn file_manager(path: &Path, is_dir: bool) -> io::Result<Command> {
+    let mut cmd = Command::new("explorer.exe");
+    cmd.raw_arg(explorer_arg(path, is_dir));
+    Ok(cmd)
+}
+
+/// Explorer parses its own command line: `/select,` must stay outside the
+/// quotes, which the standard argument quoting would put around it. A drive
+/// root gets a `.` so its `\` does not escape the closing quote (`"C:\"`).
+fn explorer_arg(path: &Path, is_dir: bool) -> OsString {
+    let mut arg = OsString::from(if is_dir { "\"" } else { "/select,\"" });
+    arg.push(path);
+    if path.as_os_str().to_string_lossy().ends_with('\\') {
+        arg.push(".");
+    }
+    arg.push("\"");
+    arg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explorer_selects_files_and_opens_folders() {
+        assert_eq!(
+            explorer_arg(Path::new(r"C:\a b\c.txt"), false),
+            r#"/select,"C:\a b\c.txt""#
+        );
+        assert_eq!(explorer_arg(Path::new(r"C:\a b"), true), r#""C:\a b""#);
+        assert_eq!(explorer_arg(Path::new("C:\\"), true), r#""C:\.""#);
+    }
 
     #[test]
     fn cargo_runs_tests_unpackaged() {
