@@ -2,7 +2,7 @@
 name = "spacejunk"
 version = "1.0.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 description = "Fast TUI disk usage analyzer: shows a tree of folders from heaviest to lightest"
 license = "MIT"
 readme = "README.md"

@@ -34,6 +34,23 @@ jobs:
           cargo build
           ./packaging/msix/pack.ps1 -Exe @{ x64 = 'target/debug/spacejunk.exe' } -Out spacejunk.msixbundle
 
+  msrv:
+    # `rust-version` in Cargo.toml is what `cargo install` checks users'
+    # compilers against; it once said 1.88 while sysinfo already needed 1.95.
+    name: minimum Rust (rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+          targets: x86_64-pc-windows-msvc
+      # `check` needs no linker, so the Windows code is checked from Linux too.
+      - run: cargo check --all-targets --locked
+      - run: cargo check --all-targets --locked --target x86_64-pc-windows-msvc
+
   install-scripts:
     name: install scripts lint
     runs-on: ubuntu-latest
