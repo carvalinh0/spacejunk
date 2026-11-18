@@ -1,0 +1,5 @@
+# The repository uses immutable GitHub releases, which refuse new assets once
+# published. release-plz creates a draft; .github/workflows/release.yml
+# attaches the binaries and then publishes it.
+[workspace]
+git_release_draft = true

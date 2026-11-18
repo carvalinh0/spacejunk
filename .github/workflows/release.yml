@@ -6,15 +6,25 @@
 #      in Cargo.toml/Cargo.lock and updates CHANGELOG.md, based on the
 #      Conventional Commits since the last release (fix: -> patch,
 #      feat: -> minor, feat!: / BREAKING CHANGE -> major).
-#   3. When that PR is merged, `release` sees the new version, creates the
-#      git tag + GitHub Release and runs `cargo publish`.
+#   3. When that PR is merged, `release` sees the new version, runs
+#      `cargo publish`, creates the git tag and a *draft* GitHub Release
+#      (release-plz.toml: git_release_draft).
 #   4. `binaries` builds every target and attaches
-#      spacejunk-<tag>-<target>.tar.gz|.zip (+ .sha256) to that release.
+#      spacejunk-<tag>-<target>.tar.gz|.zip (+ .sha256) to the draft.
 #      scripts/install.sh and scripts/install.ps1 download these names:
 #      never rename them.
+#   5. `publish-release` publishes the draft once every binary is attached.
+#
+# Why a draft: the repository uses immutable releases, which refuse assets
+# once a release is published (v0.1.0 shipped without binaries because of
+# it). Drafts are also invisible to /releases/latest, so the install scripts
+# never see a release whose binaries are still building.
+#
+# Third-party actions are pinned to commit SHAs (tag in the comment): they
+# run with write access and the crates.io token.
 #
 # Required secret: CARGO_REGISTRY_TOKEN (crates.io API token with scopes publish-new
-# and publish-update: the first release creates the crate).
+# and publish-update).
 # Required setting: Settings > Actions > General > "Allow GitHub Actions to
 # create and approve pull requests".
 
@@ -25,8 +35,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,16 +48,20 @@ jobs:
     name: Publish to crates.io
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       created: ${{ steps.release-plz.outputs.releases_created }}
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
       - id: release-plz
-        uses: release-plz/action@v0.5
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5
         with:
           command: release
         env:
@@ -64,6 +77,8 @@ jobs:
     name: Binary ${{ matrix.target }}
     needs: release
     if: needs.release.outputs.created == 'true'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -80,11 +95,11 @@ jobs:
       TARGET: ${{ matrix.target }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
+      # The commit release-plz just tagged.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          ref: ${{ needs.release.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
       - if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -107,21 +122,40 @@ jobs:
           Set-Content -Path "$name.sha256" -Value "$hash  $name" -Encoding ascii -NoNewline
           gh release upload $env:TAG $name "$name.sha256" --clobber
 
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
   release-pr:
     name: Open release PR (version bump)
-    needs: ci
+    # After `release`: on the very first run both raced and the PR proposed
+    # a version that `release` had just published.
+    needs: [ci, release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: release-plz/action@v0.5
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5
         with:
           command: release-pr
         env:
+          # No registry token: release-pr only reads public crates.io data.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
