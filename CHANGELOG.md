@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1](https://github.com/carvalinh0/spacejunk/compare/v1.0.0...v1.0.1) - 2026-11-18
+
+### Other
+
+- install from the Microsoft Store on Windows ([#10](https://github.com/carvalinh0/spacejunk/pull/10))
+- Update README to remove output example and add image
+
 ## [1.0.0](https://github.com/carvalinh0/spacejunk/releases/tag/v1.0.0) - 2026-11-18
 
 First stable release: the command line, the keys and the `--scan` output keep working the way
