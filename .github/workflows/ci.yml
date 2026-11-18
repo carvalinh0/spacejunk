@@ -33,6 +33,10 @@ jobs:
         run: |
           cargo build
           ./packaging/msix/pack.ps1 -Exe @{ x64 = 'target/debug/spacejunk.exe' } -Out spacejunk.msixbundle
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead("$PWD/spacejunk.msixupload")
+          $entries = $zip.Entries.FullName; $zip.Dispose()
+          if ($entries -notcontains 'spacejunk.msixbundle') { throw "msixupload holds: $entries" }
 
   msrv:
     # `rust-version` in Cargo.toml is what `cargo install` checks users'
