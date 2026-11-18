@@ -67,6 +67,22 @@ impl Node {
     }
 }
 
+#[cfg(test)]
+impl Node {
+    /// A file with an exact size, for tests that must not depend on how a
+    /// real filesystem allocates blocks.
+    pub fn fake_file(name: &str, size: u64) -> Node {
+        Node::new(name.into(), false, size)
+    }
+
+    /// A listed directory holding `children`; its size is theirs.
+    pub fn fake_dir(name: &str, children: Vec<Node>) -> Node {
+        let dir = Node::new(name.into(), true, children.iter().map(Node::size).sum());
+        let _ = dir.children.set(children.into_boxed_slice());
+        dir
+    }
+}
+
 /// Live counters shared with the UI while a scan is running.
 #[derive(Default)]
 pub struct Progress {

@@ -393,6 +393,55 @@ impl TreeView {
 }
 
 #[cfg(test)]
+impl App {
+    /// An app showing `screen`, without listing the real disks or asking
+    /// crates.io for updates.
+    pub fn for_test(screen: Screen, disks: Vec<DiskEntry>) -> Self {
+        App {
+            screen,
+            disks,
+            disk_selected: 0,
+            input: None,
+            message: None,
+            update: None,
+            quit: false,
+            pool: Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap(),
+            ),
+            update_rx: std::sync::mpsc::channel().1,
+        }
+    }
+}
+
+#[cfg(test)]
+impl TreeView {
+    /// The view of a scan of `root` that already finished, in `secs`.
+    pub fn finished(root: Node, files: u64, dirs: u64, secs: f64) -> Self {
+        let progress = Progress::default();
+        progress.files.store(files, Relaxed);
+        progress.dirs.store(dirs, Relaxed);
+        root.expanded.store(true, Relaxed);
+        let mut view = TreeView {
+            path: PathBuf::from(&*root.name),
+            root: Arc::new(root),
+            rows: Vec::new(),
+            selected: 0,
+            offset: 0,
+            page: 10,
+            progress: Arc::new(progress),
+            started: Instant::now(),
+            finished: Some(Duration::from_secs_f64(secs)),
+            job: None,
+        };
+        view.refresh();
+        view
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;

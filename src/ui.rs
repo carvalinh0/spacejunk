@@ -294,6 +294,54 @@ fn tree_row(view: &TreeView, i: usize) -> Row<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::DiskEntry;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use std::path::PathBuf;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+    const MIB: u64 = 1024 * 1024;
+
+    fn render(app: &mut App, width: u16, height: u16) -> Buffer {
+        let mut t = Terminal::new(TestBackend::new(width, height)).unwrap();
+        t.draw(|f| draw(f, app)).unwrap();
+        t.backend().buffer().clone()
+    }
+
+    fn lines(buf: &Buffer) -> Vec<String> {
+        let area = buf.area;
+        (0..area.height)
+            .map(|y| {
+                let line: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+                line.trim_end().to_owned()
+            })
+            .collect()
+    }
+
+    /// `/data` (open) > `videos/` (open) > `movie.mkv`, and the rest closed.
+    fn tree_app() -> App {
+        let videos = Node::fake_dir(
+            "videos",
+            vec![
+                Node::fake_file("movie.mkv", 6 * GIB),
+                Node::fake_file("clip.mp4", 512 * MIB),
+            ],
+        );
+        let root = Node::fake_dir(
+            "/data",
+            vec![
+                Node::fake_file("notes.txt", 4096),
+                videos,
+                Node::fake_dir("photos", vec![Node::fake_file("a.jpg", 2 * GIB)]),
+            ],
+        );
+        root.children()[1].expanded.store(true, Relaxed);
+        App::for_test(
+            Screen::Tree(TreeView::finished(root, 4, 3, 0.25)),
+            Vec::new(),
+        )
+    }
 
     #[test]
     fn update_notice_names_both_versions() {
@@ -324,6 +372,94 @@ mod tests {
         // A child can be read after it grew but before its parent did.
         assert!((share(150, 100) - 1.0).abs() < f64::EPSILON);
         assert!(share(5, 0).abs() < f64::EPSILON);
+    }
+
+    fn expected(screen: &str) -> Vec<String> {
+        screen
+            .strip_prefix('\n')
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn tree_screen() {
+        let buf = render(&mut tree_app(), 80, 12);
+        let screen = r"
+ spacejunk
+ /data  8.5 GiB  ·  4 files  ·  3 dirs  ·  0 errors  ·  0.25s
+┌──────────────────────────────────────────────────────────────────────────────┐
+│   8.5 GiB  100.0% ████████████ ▾ /data/                                      │
+│   6.5 GiB   76.5% █████████▏     ▾ videos/                                   │
+│   6.0 GiB   92.3% ███████████▏       movie.mkv                               │
+│ 512.0 MiB    7.7% ▉                  clip.mp4                                │
+│   2.0 GiB   23.5% ██▉            ▸ photos/                                   │
+│   4.0 KiB    0.0%                  notes.txt                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+ /data
+ ↑↓  move   →/←  open/close   Enter  toggle   r  rescan   Esc  disks   q  quit";
+        assert_eq!(lines(&buf), expected(screen));
+    }
+
+    /// The bug `SELECTED` fixed: on the selected line the bar must keep its
+    /// cells and colors, only the background changes.
+    #[test]
+    fn selecting_a_line_only_changes_its_background() {
+        let mut app = tree_app();
+        let before = render(&mut app, 80, 12);
+        let Screen::Tree(view) = &mut app.screen else {
+            unreachable!()
+        };
+        view.selected = 1; // videos/
+        let after = render(&mut app, 80, 12);
+        // What the terminal shows: REVERSED swaps the two colors on screen.
+        let shown = |c: &ratatui::buffer::Cell| {
+            if c.modifier.contains(Modifier::REVERSED) {
+                (c.bg, c.fg)
+            } else {
+                (c.fg, c.bg)
+            }
+        };
+        let y = 4;
+        for x in 0..80 {
+            let (old, new) = (&before[(x, y)], &after[(x, y)]);
+            assert_eq!(old.symbol(), new.symbol(), "x={x}");
+            assert_eq!(shown(old).0, shown(new).0, "x={x}: text color changed");
+            if (1..79).contains(&x) {
+                assert_eq!(shown(new).1, Color::DarkGray, "x={x}");
+            }
+        }
+    }
+
+    #[test]
+    fn disks_screen() {
+        let disks = vec![
+            DiskEntry {
+                mount: PathBuf::from("/"),
+                device: "/dev/sda1".into(),
+                fs: "ext4".into(),
+                total: 100 * GIB,
+                used: 25 * GIB,
+            },
+            DiskEntry {
+                mount: PathBuf::from("/mnt/backup"),
+                device: "/dev/sdb1".into(),
+                fs: "btrfs".into(),
+                total: 2048 * GIB,
+                used: 1843 * GIB,
+            },
+        ];
+        let buf = render(&mut App::for_test(Screen::Disks, disks), 100, 7);
+        let screen = r"
+ spacejunk
+┌ Select a disk ───────────────────────────────────────────────────────────────────────────────────┐
+│  Mount              Device            FS       Used        Total       Usage                     │
+│▶ /                  /dev/sda1         ext4     25.0 GiB    100.0 GiB   █████                 25% │
+│  /mnt/backup        /dev/sdb1         btrfs    1.8 TiB     2.0 TiB     ██████████████████    90% │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑↓  move   Enter  scan   p  type a path   r  refresh   q  quit";
+        assert_eq!(lines(&buf), expected(screen));
     }
 
     #[test]
