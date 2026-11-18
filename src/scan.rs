@@ -90,6 +90,22 @@ pub struct Progress {
     pub dirs: AtomicU64,
     pub errors: AtomicU64,
     pub cancel: AtomicBool,
+    /// Folders that could not be listed, with the reason: the first
+    /// `MAX_FAILED` only (`errors` keeps counting).
+    pub failed: Mutex<Vec<(PathBuf, String)>>,
+}
+
+/// Enough to show what is wrong; a whole drive without permission would
+/// otherwise keep one path per folder.
+const MAX_FAILED: usize = 1000;
+
+impl Progress {
+    fn fail(&self, path: &Path, e: &io::Error) {
+        let mut failed = self.failed.lock().unwrap();
+        if failed.len() < MAX_FAILED {
+            failed.push((path.to_path_buf(), e.to_string()));
+        }
+    }
 }
 
 /// Windows has no cheap link count, so every file id goes through this set;
@@ -148,9 +164,13 @@ pub fn scan(path: &Path, root: &Node, progress: &Progress) {
         progress.files.fetch_add(1, Relaxed);
         return;
     }
-    let Ok(info) = platform::root(path) else {
-        progress.errors.fetch_add(1, Relaxed);
-        return;
+    let info = match platform::root(path) {
+        Ok(info) => info,
+        Err(e) => {
+            progress.errors.fetch_add(1, Relaxed);
+            progress.fail(path, &e);
+            return;
+        }
     };
     let ctx = Ctx {
         dev: info.dev,
@@ -176,7 +196,12 @@ fn list_dir(path: &Path, ctx: &Ctx) -> (Vec<Node>, Vec<(usize, PathBuf)>) {
             nodes.push(Node::new(name, false, ctx.charge(&e)));
         }
     });
-    tally.errors = listed.unwrap_or(1);
+    // Entry-level errors (an entry gone between listing and lstat) are
+    // only counted; a folder that cannot be listed is also named.
+    tally.errors = listed.unwrap_or_else(|e| {
+        ctx.progress.fail(path, &e);
+        1
+    });
     ctx.flush(&tally);
     (nodes, subdirs)
 }
@@ -223,8 +248,12 @@ mod tests {
     }
 
     fn run(path: &Path) -> Node {
+        run_with(path, &Progress::default())
+    }
+
+    fn run_with(path: &Path, progress: &Progress) -> Node {
         let root = Node::root(path).unwrap();
-        scan(path, &root, &Progress::default());
+        scan(path, &root, progress);
         root
     }
 
@@ -282,6 +311,24 @@ mod tests {
         assert!(root.children().is_empty());
     }
 
+    /// Portable stand-in for an unreadable folder: it vanishes before the
+    /// scan lists it.
+    #[test]
+    fn folders_that_cannot_be_listed_are_kept_with_the_reason() {
+        let t = TempDir::new("vanished");
+        let gone = t.0.join("gone");
+        fs::create_dir(&gone).unwrap();
+        let root = Node::root(&gone).unwrap();
+        fs::remove_dir(&gone).unwrap();
+        let p = Progress::default();
+        scan(&gone, &root, &p);
+        assert_eq!(p.errors.load(Relaxed), 1);
+        let failed = p.failed.lock().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, gone);
+        assert_ne!(failed[0].1, "");
+    }
+
     #[test]
     fn missing_root_is_an_error() {
         assert!(Node::root(Path::new("/definitely/not/here")).is_err());
@@ -311,6 +358,24 @@ mod tests {
             assert_eq!(child(child(&node, "a"), "b").size(), b);
             assert_eq!(child(&node, "a").size(), a);
             assert_eq!(node.size(), usage(root) + a + usage(&root.join("small")));
+        }
+
+        #[test]
+        fn unreadable_folders_are_listed() {
+            use std::os::unix::fs::PermissionsExt;
+            let t = TempDir::new("locked");
+            let locked = t.0.join("locked");
+            fs::create_dir(&locked).unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+            let readable_anyway = fs::read_dir(&locked).is_ok(); // running as root
+            let p = Progress::default();
+            run_with(&t.0, &p);
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            if readable_anyway {
+                return;
+            }
+            let failed = p.failed.lock().unwrap();
+            assert_eq!(failed.iter().map(|f| &f.0).collect::<Vec<_>>(), [&locked]);
         }
 
         #[test]

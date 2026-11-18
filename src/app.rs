@@ -35,8 +35,8 @@ pub struct TreeView {
     pub offset: usize,
     pub page: usize,
     pub progress: Arc<Progress>,
-    /// The largest files list (`f`), shown instead of the tree while open.
-    pub files: Option<Box<FilesView>>,
+    /// A flat list shown instead of the tree while open (`f`, `e`).
+    pub panel: Option<Box<Panel>>,
     started: Instant,
     finished: Option<Duration>,
     job: Option<JoinHandle<()>>,
@@ -48,12 +48,25 @@ const LARGEST_FILES: usize = 1000;
 /// not every frame.
 const FILES_REFRESH: Duration = Duration::from_secs(1);
 
-pub struct FilesView {
-    /// Size and full path, largest first.
-    pub files: Vec<(u64, PathBuf)>,
+pub enum Panel {
+    /// The largest files (`f`).
+    Files(FilesView),
+    /// The folders that could not be read (`e`): `Progress::failed`, which
+    /// grows during the scan, so only the selection lives here.
+    Errors(ListNav),
+}
+
+/// Selection and scrolling of a flat list.
+pub struct ListNav {
     pub selected: usize,
     pub offset: usize,
     pub page: usize,
+}
+
+pub struct FilesView {
+    /// Size and full path, largest first.
+    pub files: Vec<(u64, PathBuf)>,
+    pub nav: ListNav,
     built: Instant,
 }
 
@@ -243,8 +256,8 @@ impl App {
         let Screen::Tree(view) = &mut self.screen else {
             return;
         };
-        if view.files.is_some() {
-            self.on_key_files(code);
+        if view.panel.is_some() {
+            self.on_key_panel(code);
             return;
         }
         match code {
@@ -260,29 +273,28 @@ impl App {
                 let is_dir = view.selected_node().is_dir;
                 self.reveal(&path, is_dir);
             }
-            KeyCode::Char('f') => view.files = Some(Box::new(FilesView::new(&view.root))),
+            KeyCode::Char(key @ ('f' | 'e')) => view.switch_panel(key),
             code => view.on_key(code),
         }
     }
 
-    fn on_key_files(&mut self, code: KeyCode) {
+    fn on_key_panel(&mut self, code: KeyCode) {
         let Screen::Tree(view) = &mut self.screen else {
-            return;
-        };
-        let Some(files) = &mut view.files else {
             return;
         };
         match code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Esc | KeyCode::Char('f' | 'b' | 'h') | KeyCode::Left => view.files = None,
+            KeyCode::Esc | KeyCode::Char('b' | 'h') | KeyCode::Left => view.panel = None,
+            KeyCode::Char(key @ ('f' | 'e')) => view.switch_panel(key),
             KeyCode::Char('r') => self.rescan(),
+            // Both lists hold things to find in their folder: a file, or a
+            // folder that cannot be opened.
             KeyCode::Char('o') => {
-                if let Some((_, path)) = files.files.get(files.selected) {
-                    let path = path.clone();
+                if let Some(path) = view.panel_selection() {
                     self.reveal(&path, false);
                 }
             }
-            code => files.on_key(code),
+            code => view.panel_key(code),
         }
     }
 
@@ -350,7 +362,7 @@ impl TreeView {
             offset: 0,
             page: 10,
             progress,
-            files: None,
+            panel: None,
             started: Instant::now(),
             finished: None,
             job: Some(job),
@@ -378,10 +390,44 @@ impl TreeView {
             self.finished = Some(self.started.elapsed());
         }
         self.refresh();
-        if let Some(files) = &mut self.files
+        if let Some(Panel::Files(files)) = self.panel.as_deref_mut()
             && (done || files.built.elapsed() >= FILES_REFRESH)
         {
             files.rebuild(&self.root);
+        }
+    }
+
+    /// `f` / `e`: opens that list, or goes back to the tree if it is the
+    /// one already open.
+    fn switch_panel(&mut self, key: char) {
+        let same = matches!(
+            (self.panel.as_deref(), key),
+            (Some(Panel::Files(_)), 'f') | (Some(Panel::Errors(_)), 'e')
+        );
+        self.panel = match key {
+            _ if same => None,
+            'f' => Some(Box::new(Panel::Files(FilesView::new(&self.root)))),
+            _ => Some(Box::new(Panel::Errors(ListNav::new()))),
+        };
+    }
+
+    fn panel_selection(&self) -> Option<PathBuf> {
+        match self.panel.as_deref()? {
+            Panel::Files(f) => f.files.get(f.nav.selected).map(|(_, p)| p.clone()),
+            Panel::Errors(nav) => {
+                let failed = self.progress.failed.lock().unwrap();
+                failed.get(nav.selected).map(|(p, _)| p.clone())
+            }
+        }
+    }
+
+    fn panel_key(&mut self, code: KeyCode) {
+        match self.panel.as_deref_mut() {
+            Some(Panel::Files(f)) => f.nav.on_key(code, f.files.len()),
+            Some(Panel::Errors(nav)) => {
+                nav.on_key(code, self.progress.failed.lock().unwrap().len());
+            }
+            None => {}
         }
     }
 
@@ -462,26 +508,35 @@ impl FilesView {
     fn new(root: &Node) -> Self {
         FilesView {
             files: tree::largest_files(root, LARGEST_FILES),
-            selected: 0,
-            offset: 0,
-            page: 10,
+            nav: ListNav::new(),
             built: Instant::now(),
         }
     }
 
     /// Re-reads the sizes; the selection stays on its file if still listed.
     fn rebuild(&mut self, root: &Node) {
-        let keep = self.files.get(self.selected).map(|(_, p)| p.clone());
+        let nav = &mut self.nav;
+        let keep = self.files.get(nav.selected).map(|(_, p)| p.clone());
         self.files = tree::largest_files(root, LARGEST_FILES);
         self.built = Instant::now();
         let found = keep.and_then(|k| self.files.iter().position(|(_, p)| *p == k));
-        self.selected = found
-            .unwrap_or(self.selected)
+        nav.selected = found
+            .unwrap_or(nav.selected)
             .min(self.files.len().saturating_sub(1));
     }
+}
 
-    fn on_key(&mut self, code: KeyCode) {
-        let last = self.files.len().saturating_sub(1);
+impl ListNav {
+    fn new() -> Self {
+        ListNav {
+            selected: 0,
+            offset: 0,
+            page: 10,
+        }
+    }
+
+    fn on_key(&mut self, code: KeyCode, len: usize) {
+        let last = len.saturating_sub(1);
         let page = self.page.max(1);
         self.selected = match code {
             KeyCode::Up | KeyCode::Char('k') => self.selected.saturating_sub(1),
@@ -536,7 +591,7 @@ impl TreeView {
             offset: 0,
             page: 10,
             progress: Arc::new(progress),
-            files: None,
+            panel: None,
             started: Instant::now(),
             finished: Some(Duration::from_secs_f64(secs)),
             job: None,
@@ -610,23 +665,54 @@ mod tests {
         let Screen::Tree(view) = &app.screen else {
             unreachable!()
         };
-        let files = view.files.as_ref().expect("files view open");
+        let Some(Panel::Files(files)) = view.panel.as_deref() else {
+            panic!("files view not open")
+        };
         assert_eq!(file_names(files), ["big", "small"]);
-        assert_eq!(files.selected, 1);
+        assert_eq!(files.nav.selected, 1);
         app.on_key(KeyCode::Esc.into());
         let Screen::Tree(view) = &app.screen else {
             panic!("Esc left the scan instead of the files view")
         };
-        assert!(view.files.is_none());
+        assert!(view.panel.is_none());
+    }
+
+    #[test]
+    fn e_lists_unreadable_folders_and_f_switches_lists() {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1);
+        view.progress
+            .failed
+            .lock()
+            .unwrap()
+            .push(("/r/locked".into(), "Permission denied".into()));
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        let panel = |app: &App| match &app.screen {
+            Screen::Tree(v) => match v.panel.as_deref() {
+                None => "tree",
+                Some(Panel::Files(_)) => "files",
+                Some(Panel::Errors(_)) => "errors",
+            },
+            Screen::Disks => "disks",
+        };
+        app.on_key(KeyCode::Char('e').into());
+        assert_eq!(panel(&app), "errors");
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(view.panel_selection(), Some(PathBuf::from("/r/locked")));
+        app.on_key(KeyCode::Char('f').into());
+        assert_eq!(panel(&app), "files");
+        app.on_key(KeyCode::Char('f').into());
+        assert_eq!(panel(&app), "tree");
     }
 
     #[test]
     fn files_selection_follows_its_file_when_the_list_reorders() {
         let mut files = FilesView::new(&files_root(1));
-        files.selected = 1; // small
+        files.nav.selected = 1; // small
         files.rebuild(&files_root(100)); // small is now the largest
         assert_eq!(file_names(&files), ["small", "big"]);
-        assert_eq!(files.selected, 0);
+        assert_eq!(files.nav.selected, 0);
     }
 
     #[test]

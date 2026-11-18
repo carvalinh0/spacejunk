@@ -93,6 +93,15 @@ fn xdg_open(path: &Path, is_dir: bool, graphical: bool) -> io::Result<Command> {
     Ok(cmd)
 }
 
+/// Shown under the list of folders that could not be read. macOS also
+/// guards some folders (Mail, Messages...) from every app not granted Full
+/// Disk Access, root included.
+#[cfg(target_os = "macos")]
+pub const ELEVATE_HINT: &str =
+    "Run with sudo, or give your terminal Full Disk Access in System Settings";
+#[cfg(not(target_os = "macos"))]
+pub const ELEVATE_HINT: &str = "Run spacejunk with sudo to read them";
+
 #[cfg(test)]
 mod tests {
     use super::*;
