@@ -178,8 +178,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 PR with the new version and the CHANGELOG; merging it creates the tag, publishes the crate to crates.io
 and attaches the Linux (x86_64/arm64, static), macOS (Intel/Apple Silicon) and Windows (x64/arm64)
 binaries to the GitHub Release, each with its `.sha256`. The same run builds the Microsoft Store
-bundle (`packaging/msix/`) as a workflow artifact and, when the `STORE_*` secrets are set (see the
-top of `release.yml`), submits it to the Store; otherwise upload the `.msixupload` in Partner Center.
+bundle (`packaging/msix/`) as a workflow artifact: upload its `.msixupload` in Partner Center.
 
 Requires the `CARGO_REGISTRY_TOKEN` secret in the repository.
 
