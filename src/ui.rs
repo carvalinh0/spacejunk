@@ -10,7 +10,8 @@ use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
 
 use std::path::{Path, PathBuf};
 
-use crate::app::{App, FilesView, ListNav, Panel, Screen, TreeView};
+use crate::app::{App, ListKind, ListNav, ListView, Panel, Screen, TreeView};
+use crate::junk;
 use crate::platform;
 use crate::scan::Node;
 use crate::tree::{self, NONE};
@@ -167,11 +168,19 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             ("q", "quit"),
         ],
         Screen::Tree(view) => match view.panel.as_deref() {
-            Some(Panel::Files(_)) => &[
+            Some(Panel::List(list)) if list.kind == ListKind::LargestFiles => &[
                 ("↑↓", "move"),
                 ("o", "file manager"),
                 ("d", "delete"),
                 ("f/Esc", "back to the tree"),
+                ("r", "rescan"),
+                ("q", "quit"),
+            ],
+            Some(Panel::List(_)) => &[
+                ("↑↓", "move"),
+                ("o", "file manager"),
+                ("d", "delete"),
+                ("c/Esc", "back to the tree"),
                 ("r", "rescan"),
                 ("q", "quit"),
             ],
@@ -186,6 +195,7 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
                 ("↑↓", "move"),
                 ("→/←", "open/close"),
                 ("f", "largest files"),
+                ("c", "junk"),
                 ("o", "file manager"),
                 ("d", "delete"),
                 ("e", "errors"),
@@ -293,8 +303,8 @@ fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) -> Rect {
     f.render_widget(summary(view), info);
     let total = view.root.size();
     match view.panel.as_deref_mut() {
-        Some(Panel::Files(files)) => {
-            draw_files(f, [list, status], files, &view.path, total);
+        Some(Panel::List(items)) => {
+            draw_list(f, [list, status], items, &view.path, total);
             return lines_area(list, 0);
         }
         Some(Panel::Errors(nav)) => {
@@ -340,36 +350,55 @@ fn visible(nav: &mut ListNav, list: Rect, len: usize) -> std::ops::Range<usize> 
     nav.offset..(nav.offset + height).min(len)
 }
 
-fn draw_files(
+fn draw_list(
     f: &mut Frame,
     [list, status]: [Rect; 2],
-    files: &mut FilesView,
+    view: &mut ListView,
     base: &Path,
     total: u64,
 ) {
-    let block = Block::bordered().title(format!(" Largest files ({}) ", files.files.len()));
-    if files.files.is_empty() {
-        f.render_widget(Paragraph::new(" No files yet.").block(block), list);
+    let items = &view.items;
+    let block = match view.kind {
+        ListKind::LargestFiles => {
+            Block::bordered().title(format!(" Largest files ({}) ", items.len()))
+        }
+        ListKind::Junk => {
+            let junk: u64 = items.iter().map(|i| i.size).sum();
+            Block::bordered()
+                .title(format!(" Junk: {}, {} ", folders(items.len()), human(junk)))
+                .title_bottom(" Rebuilt by the programs that made them when needed ")
+        }
+    };
+    if items.is_empty() {
+        let text = match view.kind {
+            ListKind::LargestFiles => " No files yet.",
+            ListKind::Junk => " No junk found: no caches, build folders or temporary files.",
+        };
+        f.render_widget(Paragraph::new(text).block(block), list);
         return;
     }
-    let shown = visible(&mut files.nav, list, files.files.len());
-    let rows = files.files[shown].iter().map(|(size, path)| {
-        let frac = share(*size, total);
-        let shown = path.strip_prefix(base).unwrap_or(path);
+    let shown = visible(&mut view.nav, list, items.len());
+    let rows = items[shown].iter().map(|item| {
+        let frac = share(item.size, total);
+        let path = item.path.strip_prefix(base).unwrap_or(&item.path);
+        let mut name = vec![Span::raw(path.display().to_string())];
+        if !item.tag.is_empty() {
+            name.push(Span::raw(format!("  {}", item.tag)).dim());
+        }
         Row::new(vec![
-            Cell::from(format!("{:>10}", human(*size))).fg(heat(frac)),
+            Cell::from(format!("{:>10}", human(item.size))).fg(heat(frac)),
             Cell::from(format!("{:>5.1}%", frac * 100.0)),
             Cell::from(bar(frac, 12)).fg(heat(frac)),
-            Cell::from(shown.display().to_string()),
+            Cell::from(Line::from(name)),
         ])
     });
     let table = Table::new(rows, columns())
         .row_highlight_style(SELECTED)
         .block(block);
-    let nav = &files.nav;
+    let nav = &view.nav;
     let mut state = TableState::default().with_selected(Some(nav.selected - nav.offset));
     f.render_stateful_widget(table, list, &mut state);
-    let path = &files.files[nav.selected].1;
+    let path = &items[nav.selected].path;
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
 }
 
@@ -414,6 +443,14 @@ fn draw_errors(
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
 }
 
+fn folders(n: usize) -> String {
+    if n == 1 {
+        "1 folder".to_owned()
+    } else {
+        format!("{n} folders")
+    }
+}
+
 /// Size, share, bar, name: the tree and the largest files list line up.
 fn columns() -> [Constraint; 4] {
     [
@@ -433,7 +470,7 @@ fn share(size: u64, parent_size: u64) -> f64 {
     }
 }
 
-fn node_label(n: &Node, depth: u16) -> Line<'static> {
+fn node_label(n: &Node, depth: u16, junk: Option<&str>) -> Line<'static> {
     let marker = if n.is_pending() {
         Span::raw(format!("{} ", spinner())).yellow()
     } else if !n.can_expand() {
@@ -452,7 +489,10 @@ fn node_label(n: &Node, depth: u16) -> Line<'static> {
     } else {
         Span::styled(format!("{}/", n.name), DIR_STYLE)
     };
-    Line::from(vec![indent, marker, name])
+    let junk = junk.map_or_else(Span::default, |what| {
+        Span::raw(format!("  junk: {what}")).dim()
+    });
+    Line::from(vec![indent, marker, name, junk])
 }
 
 fn tree_row(view: &TreeView, i: usize) -> Row<'static> {
@@ -465,11 +505,18 @@ fn tree_row(view: &TreeView, i: usize) -> Row<'static> {
         tree::node(&view.root, &view.rows, row.parent as usize).size()
     };
     let frac = share(size, parent_size);
+    // Only folders can be junk; their path costs one walk up the rows.
+    let junk = (n.is_dir && row.parent != NONE)
+        .then(|| {
+            let parent = tree::node(&view.root, &view.rows, row.parent as usize);
+            junk::kind(n, parent, &tree::path_of(&view.root, &view.rows, i))
+        })
+        .flatten();
     Row::new(vec![
         Cell::from(format!("{:>10}", human(size))).fg(heat(frac)),
         Cell::from(format!("{:>5.1}%", frac * 100.0)),
         Cell::from(bar(frac, 12)).fg(heat(frac)),
-        Cell::from(node_label(n, row.depth)),
+        Cell::from(node_label(n, row.depth, junk)),
     ])
 }
 
@@ -580,7 +627,7 @@ mod tests {
 │   4.0 KiB    0.0%                  notes.txt                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
  /data
- ↑↓  move   →/←  open/close   f  largest files   o  file manager   q  quit";
+ ↑↓  move   →/←  open/close   f  largest files   c  junk   q  quit";
         assert_eq!(lines(&buf), expected(screen));
     }
 
@@ -604,6 +651,48 @@ mod tests {
  ↑↓  move   o  file manager   d  delete   f/Esc  back to the tree   q  quit"
         );
         assert_eq!(lines(&buf), expected(&screen));
+    }
+
+    /// `/code` (open) holds `node_modules/`, marked as junk in the tree.
+    fn junk_app() -> App {
+        let deps = Node::fake_dir("node_modules", vec![Node::fake_file("react.js", 3 * MIB)]);
+        let code = Node::fake_dir(
+            "/code",
+            vec![
+                deps,
+                Node::fake_file("package.json", MIB / 2),
+                Node::fake_file("package-lock.json", MIB / 2),
+            ],
+        );
+        App::for_test(
+            Screen::Tree(TreeView::finished(code, 2, 2, 0.1)),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn junk_is_marked_in_the_tree_and_listed_by_c() {
+        let mut app = junk_app();
+        let buf = render(&mut app, 80, 8);
+        assert_eq!(
+            lines(&buf)[4],
+            "│   3.0 MiB   75.0% █████████      ▸ node_modules/  junk: npm packages         │"
+        );
+        app.on_key(ratatui::crossterm::event::KeyCode::Char('c').into());
+        let buf = render(&mut app, 80, 7);
+        let screen = r"
+ spacejunk
+ /code  4.0 MiB  ·  2 files  ·  2 dirs  ·  0 errors  ·  0.10s
+┌ Junk: 1 folder, 3.0 MiB ─────────────────────────────────────────────────────┐
+│   3.0 MiB   75.0% █████████    node_modules  npm packages                    │
+└ Rebuilt by the programs that made them when needed ──────────────────────────┘
+ /code/node_modules
+ ↑↓  move   o  file manager   d  delete   c/Esc  back to the tree   q  quit";
+        let sep = std::path::MAIN_SEPARATOR.to_string();
+        assert_eq!(
+            lines(&buf),
+            expected(&screen.replace("/code/", &format!("/code{sep}")))
+        );
     }
 
     #[test]

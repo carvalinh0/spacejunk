@@ -18,7 +18,7 @@ use sysinfo::Disks;
 
 use crate::platform;
 use crate::scan::{self, Node, Progress};
-use crate::tree::{self, NONE, Row};
+use crate::tree::{self, Listed, NONE, Row};
 use crate::update;
 
 pub struct DiskEntry {
@@ -45,15 +45,15 @@ pub struct TreeView {
     job: Option<JoinHandle<()>>,
 }
 
-/// How many files the largest files list keeps.
-const LARGEST_FILES: usize = 1000;
-/// The list walks the whole tree, so a running scan refreshes it this often,
-/// not every frame.
-const FILES_REFRESH: Duration = Duration::from_secs(1);
+/// How many lines a list built from the tree keeps.
+const LIST_LIMIT: usize = 1000;
+/// Such a list walks the whole tree, so a running scan refreshes it this
+/// often, not every frame.
+const LIST_REFRESH: Duration = Duration::from_secs(1);
 
 pub enum Panel {
-    /// The largest files (`f`).
-    Files(FilesView),
+    /// A list built from the tree: the largest files (`f`) or the junk (`c`).
+    List(ListView),
     /// The folders that could not be read (`e`): `Progress::failed`, which
     /// grows during the scan, so only the selection lives here.
     Errors(ListNav),
@@ -66,9 +66,16 @@ pub struct ListNav {
     pub page: usize,
 }
 
-pub struct FilesView {
-    /// Size and full path, largest first.
-    pub files: Vec<(u64, PathBuf)>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKind {
+    LargestFiles,
+    Junk,
+}
+
+pub struct ListView {
+    pub kind: ListKind,
+    /// Largest first.
+    pub items: Vec<Listed>,
     pub nav: ListNav,
     built: Instant,
 }
@@ -308,7 +315,7 @@ impl App {
         };
         match view.panel.as_deref_mut() {
             None => (&mut view.selected, view.offset, view.rows.len()),
-            Some(Panel::Files(f)) => (&mut f.nav.selected, f.nav.offset, f.files.len()),
+            Some(Panel::List(l)) => (&mut l.nav.selected, l.nav.offset, l.items.len()),
             Some(Panel::Errors(nav)) => {
                 let len = view.progress.failed.lock().unwrap().len();
                 (&mut nav.selected, nav.offset, len)
@@ -356,7 +363,7 @@ impl App {
                 let is_dir = view.selected_node().is_dir;
                 self.reveal(&path, is_dir);
             }
-            KeyCode::Char(key @ ('f' | 'e')) => view.switch_panel(key),
+            KeyCode::Char(key @ ('f' | 'c' | 'e')) => view.switch_panel(key),
             KeyCode::Char('d') => {
                 let path = tree::path_of(&view.root, &view.rows, view.selected);
                 self.ask_removal(path);
@@ -372,7 +379,7 @@ impl App {
         match code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc | KeyCode::Char('b' | 'h') | KeyCode::Left => view.panel = None,
-            KeyCode::Char(key @ ('f' | 'e')) => view.switch_panel(key),
+            KeyCode::Char(key @ ('f' | 'c' | 'e')) => view.switch_panel(key),
             KeyCode::Char('r') => self.rescan(),
             // Both lists hold things to find in their folder: a file, or a
             // folder that cannot be opened.
@@ -381,7 +388,7 @@ impl App {
                     self.reveal(&path, false);
                 }
             }
-            KeyCode::Char('d') if matches!(view.panel.as_deref(), Some(Panel::Files(_))) => {
+            KeyCode::Char('d') if matches!(view.panel.as_deref(), Some(Panel::List(_))) => {
                 if let Some(path) = view.panel_selection() {
                     self.ask_removal(path);
                 }
@@ -442,8 +449,8 @@ impl App {
             node.remove(ancestors);
         }
         view.refresh();
-        if let Some(Panel::Files(files)) = view.panel.as_deref_mut() {
-            files.rebuild(&view.root);
+        if let Some(Panel::List(list)) = view.panel.as_deref_mut() {
+            list.rebuild(&view.root);
         }
         self.message = None;
         self.notice = Some(format!(
@@ -539,30 +546,34 @@ impl TreeView {
             self.finished = Some(self.started.elapsed());
         }
         self.refresh();
-        if let Some(Panel::Files(files)) = self.panel.as_deref_mut()
-            && (done || files.built.elapsed() >= FILES_REFRESH)
+        if let Some(Panel::List(list)) = self.panel.as_deref_mut()
+            && (done || list.built.elapsed() >= LIST_REFRESH)
         {
-            files.rebuild(&self.root);
+            list.rebuild(&self.root);
         }
     }
 
-    /// `f` / `e`: opens that list, or goes back to the tree if it is the
-    /// one already open.
+    /// `f` / `c` / `e`: opens that list, or goes back to the tree if it is
+    /// the one already open.
     fn switch_panel(&mut self, key: char) {
-        let same = matches!(
-            (self.panel.as_deref(), key),
-            (Some(Panel::Files(_)), 'f') | (Some(Panel::Errors(_)), 'e')
-        );
+        let open = match self.panel.as_deref() {
+            Some(Panel::List(l)) if l.kind == ListKind::LargestFiles => 'f',
+            Some(Panel::List(_)) => 'c',
+            Some(Panel::Errors(_)) => 'e',
+            None => ' ',
+        };
+        let list = |kind| Panel::List(ListView::new(kind, &self.root));
         self.panel = match key {
-            _ if same => None,
-            'f' => Some(Box::new(Panel::Files(FilesView::new(&self.root)))),
+            _ if key == open => None,
+            'f' => Some(Box::new(list(ListKind::LargestFiles))),
+            'c' => Some(Box::new(list(ListKind::Junk))),
             _ => Some(Box::new(Panel::Errors(ListNav::new()))),
         };
     }
 
     fn panel_selection(&self) -> Option<PathBuf> {
         match self.panel.as_deref()? {
-            Panel::Files(f) => f.files.get(f.nav.selected).map(|(_, p)| p.clone()),
+            Panel::List(l) => l.items.get(l.nav.selected).map(|i| i.path.clone()),
             Panel::Errors(nav) => {
                 let failed = self.progress.failed.lock().unwrap();
                 failed.get(nav.selected).map(|(p, _)| p.clone())
@@ -572,7 +583,7 @@ impl TreeView {
 
     fn panel_key(&mut self, code: KeyCode) {
         match self.panel.as_deref_mut() {
-            Some(Panel::Files(f)) => f.nav.on_key(code, f.files.len()),
+            Some(Panel::List(l)) => l.nav.on_key(code, l.items.len()),
             Some(Panel::Errors(nav)) => {
                 nav.on_key(code, self.progress.failed.lock().unwrap().len());
             }
@@ -653,25 +664,33 @@ impl TreeView {
     }
 }
 
-impl FilesView {
-    fn new(root: &Node) -> Self {
-        FilesView {
-            files: tree::largest_files(root, LARGEST_FILES),
+impl ListView {
+    fn new(kind: ListKind, root: &Node) -> Self {
+        ListView {
+            kind,
+            items: Self::build(kind, root),
             nav: ListNav::new(),
             built: Instant::now(),
         }
     }
 
-    /// Re-reads the sizes; the selection stays on its file if still listed.
+    fn build(kind: ListKind, root: &Node) -> Vec<Listed> {
+        match kind {
+            ListKind::LargestFiles => tree::largest_files(root, LIST_LIMIT),
+            ListKind::Junk => tree::junk_folders(root, LIST_LIMIT),
+        }
+    }
+
+    /// Re-reads the sizes; the selection stays on its entry if still listed.
     fn rebuild(&mut self, root: &Node) {
         let nav = &mut self.nav;
-        let keep = self.files.get(nav.selected).map(|(_, p)| p.clone());
-        self.files = tree::largest_files(root, LARGEST_FILES);
+        let keep = self.items.get(nav.selected).map(|i| i.path.clone());
+        self.items = Self::build(self.kind, root);
         self.built = Instant::now();
-        let found = keep.and_then(|k| self.files.iter().position(|(_, p)| *p == k));
+        let found = keep.and_then(|k| self.items.iter().position(|i| i.path == k));
         nav.selected = found
             .unwrap_or(nav.selected)
-            .min(self.files.len().saturating_sub(1));
+            .min(self.items.len().saturating_sub(1));
     }
 }
 
@@ -805,8 +824,8 @@ mod tests {
         )
     }
 
-    fn file_names(files: &FilesView) -> Vec<String> {
-        let names = files.files.iter().map(|(_, p)| p.file_name().unwrap());
+    fn file_names(files: &ListView) -> Vec<String> {
+        let names = files.items.iter().map(|i| i.path.file_name().unwrap());
         names.map(|n| n.to_string_lossy().into_owned()).collect()
     }
 
@@ -819,7 +838,7 @@ mod tests {
         let Screen::Tree(view) = &app.screen else {
             unreachable!()
         };
-        let Some(Panel::Files(files)) = view.panel.as_deref() else {
+        let Some(Panel::List(files)) = view.panel.as_deref() else {
             panic!("files view not open")
         };
         assert_eq!(file_names(files), ["big", "small"]);
@@ -843,7 +862,7 @@ mod tests {
         let panel = |app: &App| match &app.screen {
             Screen::Tree(v) => match v.panel.as_deref() {
                 None => "tree",
-                Some(Panel::Files(_)) => "files",
+                Some(Panel::List(_)) => "files",
                 Some(Panel::Errors(_)) => "errors",
             },
             Screen::Disks => "disks",
@@ -916,7 +935,7 @@ mod tests {
         let Screen::Tree(view) = &app.screen else {
             unreachable!()
         };
-        let Some(Panel::Files(files)) = view.panel.as_deref() else {
+        let Some(Panel::List(files)) = view.panel.as_deref() else {
             panic!("files view not open")
         };
         assert_eq!(files.nav.selected, 1, "clamped to the last of 2 files");
@@ -979,7 +998,7 @@ mod tests {
         app.on_key(KeyCode::Char('y').into());
         let big = PathBuf::from("/r").join("a").join("big");
         assert_eq!(TRASHED.with(|t| t.borrow().clone()), [big]);
-        let Some(Panel::Files(files)) = tree(&app).panel.as_deref() else {
+        let Some(Panel::List(files)) = tree(&app).panel.as_deref() else {
             panic!("files view closed")
         };
         assert_eq!(file_names(files), ["small"]);
@@ -1001,8 +1020,35 @@ mod tests {
     }
 
     #[test]
+    fn c_lists_the_junk_and_d_can_trash_it() {
+        let root = Node::fake_dir(
+            "/r",
+            vec![Node::fake_dir(
+                "app",
+                vec![Node::fake_dir("__pycache__", vec![Node::fake_file("x", 7)])],
+            )],
+        );
+        let mut app = App::for_test(
+            Screen::Tree(TreeView::finished(root, 1, 3, 0.1)),
+            Vec::new(),
+        );
+        app.trash = |_| Ok(());
+        app.on_key(KeyCode::Char('c').into());
+        let Some(Panel::List(junk)) = tree(&app).panel.as_deref() else {
+            panic!("junk list not open")
+        };
+        assert_eq!(junk.kind, ListKind::Junk);
+        assert_eq!(file_names(junk), ["__pycache__"]);
+        app.on_key(KeyCode::Char('d').into());
+        app.on_key(KeyCode::Char('y').into());
+        assert_eq!(tree(&app).root.size(), 0);
+        app.on_key(KeyCode::Char('c').into());
+        assert!(tree(&app).panel.is_none(), "c again closes it");
+    }
+
+    #[test]
     fn files_selection_follows_its_file_when_the_list_reorders() {
-        let mut files = FilesView::new(&files_root(1));
+        let mut files = ListView::new(ListKind::LargestFiles, &files_root(1));
         files.nav.selected = 1; // small
         files.rebuild(&files_root(100)); // small is now the largest
         assert_eq!(file_names(&files), ["small", "big"]);

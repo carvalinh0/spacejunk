@@ -1,4 +1,5 @@
 mod app;
+mod junk;
 mod platform;
 mod scan;
 mod tree;
