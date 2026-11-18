@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/carvalinh0/spacejunk/compare/v0.1.1...v0.1.2) - 2026-11-18
+
+### Added
+
+- Microsoft Store package ([#5](https://github.com/carvalinh0/spacejunk/pull/5))
+
 ## [0.1.1](https://github.com/carvalinh0/spacejunk/releases/tag/v0.1.1) - 2026-11-18
 
 No code changes. First release with prebuilt binaries attached, so the install
