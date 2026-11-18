@@ -15,11 +15,22 @@ from **heaviest to lightest**, updated **live** while the scan runs.
 curl -fsSL https://raw.githubusercontent.com/carvalinh0/spacejunk/main/scripts/install.sh | sh
 ```
 
-**Windows** (PowerShell)
+**Windows**: get it from the [Microsoft Store](https://apps.microsoft.com/detail/9NLB9QFQQRW3), or from a terminal:
+
+```powershell
+winget install 9NLB9QFQQRW3 --source msstore
+```
+
+The Store version is signed by Microsoft, so Windows 11 Smart App Control lets it run, and the Store
+keeps it up to date. It adds the `spacejunk` command to every terminal and a Start Menu entry.
+
+**Windows without the Store** (PowerShell)
 
 ```powershell
 irm https://raw.githubusercontent.com/carvalinh0/spacejunk/main/scripts/install.ps1 | iex
 ```
+
+The binary this script installs is not signed: Windows 11 blocks it when Smart App Control is on.
 
 The scripts use `cargo install spacejunk` when Rust is installed. Without cargo, or if the build
 fails, they download the latest release binary, verify its SHA-256 and install it to
@@ -54,6 +65,9 @@ Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\spacejunk.lnk"
 ```
 
 On Windows, also remove `%LOCALAPPDATA%\Programs\spacejunk` from your user PATH (Settings > Environment variables).
+
+Microsoft Store version: Settings > Apps > Installed apps > spacejunk > Uninstall, or
+`winget uninstall 9NLB9QFQQRW3`.
 
 ### Update notice
 
