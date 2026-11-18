@@ -133,7 +133,7 @@ fn footer_for(app: &App) -> Line<'static> {
         Screen::Tree(_) => footer(&[
             ("↑↓", "move"),
             ("→/←", "open/close"),
-            ("Enter", "toggle"),
+            ("o", "file manager"),
             ("r", "rescan"),
             ("Esc", "disks"),
             ("q", "quit"),
@@ -398,7 +398,7 @@ mod tests {
 │   4.0 KiB    0.0%                  notes.txt                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
  /data
- ↑↓  move   →/←  open/close   Enter  toggle   r  rescan   Esc  disks   q  quit";
+ ↑↓  move   →/←  open/close   o  file manager   r  rescan   Esc  disks   q  quit";
         assert_eq!(lines(&buf), expected(screen));
     }
 
