@@ -8,7 +8,10 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
 
-use crate::app::{App, Screen, TreeView};
+use std::path::{Path, PathBuf};
+
+use crate::app::{App, FilesView, ListNav, Panel, Screen, TreeView};
+use crate::platform;
 use crate::scan::Node;
 use crate::tree::{self, NONE};
 use crate::update;
@@ -146,22 +149,32 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             ("r", "refresh"),
             ("q", "quit"),
         ],
-        Screen::Tree(view) if view.files.is_some() => &[
-            ("↑↓", "move"),
-            ("o", "file manager"),
-            ("f/Esc", "back to the tree"),
-            ("r", "rescan"),
-            ("q", "quit"),
-        ],
-        Screen::Tree(_) => &[
-            ("↑↓", "move"),
-            ("→/←", "open/close"),
-            ("f", "largest files"),
-            ("o", "file manager"),
-            ("r", "rescan"),
-            ("Esc", "disks"),
-            ("q", "quit"),
-        ],
+        Screen::Tree(view) => match view.panel.as_deref() {
+            Some(Panel::Files(_)) => &[
+                ("↑↓", "move"),
+                ("o", "file manager"),
+                ("f/Esc", "back to the tree"),
+                ("r", "rescan"),
+                ("q", "quit"),
+            ],
+            Some(Panel::Errors(_)) => &[
+                ("↑↓", "move"),
+                ("o", "file manager"),
+                ("e/Esc", "back to the tree"),
+                ("r", "rescan"),
+                ("q", "quit"),
+            ],
+            None => &[
+                ("↑↓", "move"),
+                ("→/←", "open/close"),
+                ("f", "largest files"),
+                ("o", "file manager"),
+                ("e", "errors"),
+                ("r", "rescan"),
+                ("Esc", "disks"),
+                ("q", "quit"),
+            ],
+        },
     };
     footer(keys, width)
 }
@@ -210,11 +223,14 @@ fn summary(view: &TreeView) -> Line<'static> {
     let p = &view.progress;
     let files = p.files.load(Relaxed);
     let secs = view.elapsed().as_secs_f64();
+    let errors = match p.errors.load(Relaxed) {
+        0 => "0 errors".to_owned(),
+        n => format!("{n} errors (e: list)"),
+    };
     let counts = format!(
-        "{}  ·  {files} files  ·  {} dirs  ·  {} errors",
+        "{}  ·  {files} files  ·  {} dirs  ·  {errors}",
         human(view.root.size()),
         p.dirs.load(Relaxed),
-        p.errors.load(Relaxed),
     );
     if view.is_scanning() {
         let rate = files as f64 / secs.max(0.001);
@@ -238,9 +254,16 @@ fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) {
     ])
     .areas(area);
     f.render_widget(summary(view), info);
-    if view.files.is_some() {
-        draw_files(f, list, status, view);
-        return;
+    let total = view.root.size();
+    match view.panel.as_deref_mut() {
+        Some(Panel::Files(files)) => {
+            return draw_files(f, [list, status], files, &view.path, total);
+        }
+        Some(Panel::Errors(nav)) => {
+            let failed = view.progress.failed.lock().unwrap();
+            return draw_errors(f, [list, status], nav, &failed, &view.path);
+        }
+        None => {}
     }
 
     // Only build rows for the lines on screen: the row list can be huge.
@@ -268,24 +291,31 @@ fn scroll(offset: &mut usize, selected: usize, height: usize) {
     }
 }
 
-fn draw_files(f: &mut Frame, list: Rect, status: Rect, view: &mut TreeView) {
-    let total = view.root.size();
-    let base = view.path.clone();
-    let Some(files) = &mut view.files else {
-        return;
-    };
+/// Fits the list's selection and scroll to `list`; returns the visible range.
+fn visible(nav: &mut ListNav, list: Rect, len: usize) -> std::ops::Range<usize> {
+    let height = list.height.saturating_sub(2) as usize; // borders
+    nav.page = height;
+    nav.selected = nav.selected.min(len.saturating_sub(1));
+    scroll(&mut nav.offset, nav.selected, height);
+    nav.offset..(nav.offset + height).min(len)
+}
+
+fn draw_files(
+    f: &mut Frame,
+    [list, status]: [Rect; 2],
+    files: &mut FilesView,
+    base: &Path,
+    total: u64,
+) {
     let block = Block::bordered().title(format!(" Largest files ({}) ", files.files.len()));
     if files.files.is_empty() {
         f.render_widget(Paragraph::new(" No files yet.").block(block), list);
         return;
     }
-    let height = list.height.saturating_sub(2) as usize;
-    files.page = height;
-    scroll(&mut files.offset, files.selected, height);
-    let end = (files.offset + height).min(files.files.len());
-    let rows = files.files[files.offset..end].iter().map(|(size, path)| {
+    let shown = visible(&mut files.nav, list, files.files.len());
+    let rows = files.files[shown].iter().map(|(size, path)| {
         let frac = share(*size, total);
-        let shown = path.strip_prefix(&base).unwrap_or(path);
+        let shown = path.strip_prefix(base).unwrap_or(path);
         Row::new(vec![
             Cell::from(format!("{:>10}", human(*size))).fg(heat(frac)),
             Cell::from(format!("{:>5.1}%", frac * 100.0)),
@@ -296,9 +326,51 @@ fn draw_files(f: &mut Frame, list: Rect, status: Rect, view: &mut TreeView) {
     let table = Table::new(rows, columns())
         .row_highlight_style(SELECTED)
         .block(block);
-    let mut state = TableState::default().with_selected(Some(files.selected - files.offset));
+    let nav = &files.nav;
+    let mut state = TableState::default().with_selected(Some(nav.selected - nav.offset));
     f.render_stateful_widget(table, list, &mut state);
-    let path = &files.files[files.selected].1;
+    let path = &files.files[nav.selected].1;
+    f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
+}
+
+fn draw_errors(
+    f: &mut Frame,
+    [list, status]: [Rect; 2],
+    nav: &mut ListNav,
+    failed: &[(PathBuf, String)],
+    base: &Path,
+) {
+    let block = Block::bordered()
+        .title(format!(" Could not read ({}) ", failed.len()))
+        .title_bottom(format!(" {} ", platform::ELEVATE_HINT));
+    if failed.is_empty() {
+        f.render_widget(
+            Paragraph::new(" Every folder could be read.").block(block),
+            list,
+        );
+        return;
+    }
+    let shown = visible(nav, list, failed.len());
+    let rows = failed[shown].iter().map(|(path, reason)| {
+        let shown = path.strip_prefix(base).unwrap_or(path);
+        Row::new(vec![
+            Cell::from(shown.display().to_string()),
+            Cell::from(reason.clone()).dim(),
+        ])
+    });
+    // Reasons are short ("Permission denied (os error 13)"): give them their
+    // width and the path the rest.
+    let reason_width = failed.iter().map(|(_, r)| r.chars().count()).max();
+    let reason_width = reason_width.unwrap_or(0).min(40) as u16;
+    let table = Table::new(
+        rows,
+        [Constraint::Fill(1), Constraint::Length(reason_width)],
+    )
+    .row_highlight_style(SELECTED)
+    .block(block);
+    let mut state = TableState::default().with_selected(Some(nav.selected - nav.offset));
+    f.render_stateful_widget(table, list, &mut state);
+    let path = &failed[nav.selected].0;
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
 }
 
@@ -490,6 +562,37 @@ mod tests {
 └──────────────────────────────────────────────────────────────────────────────┘
  /data{sep}videos{sep}movie.mkv
  ↑↓  move   o  file manager   f/Esc  back to the tree   r  rescan   q  quit"
+        );
+        assert_eq!(lines(&buf), expected(&screen));
+    }
+
+    #[test]
+    fn errors_screen() {
+        let mut app = tree_app();
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        let reason = "Permission denied (os error 13)";
+        let locked = PathBuf::from("/data").join("photos").join("private");
+        view.progress.errors.store(1, Relaxed);
+        let failed = &view.progress.failed;
+        failed.lock().unwrap().push((locked, reason.into()));
+        app.on_key(ratatui::crossterm::event::KeyCode::Char('e').into());
+        let buf = render(&mut app, 80, 7);
+        let sep = std::path::MAIN_SEPARATOR;
+        let hint = platform::ELEVATE_HINT;
+        let bottom = format!("└ {hint} {}┘", "─".repeat(76 - hint.chars().count()));
+        // Path column: what the reason (and the column gap) leaves of 78.
+        let row = format!("│{:<47}{reason}│", format!("photos{sep}private"));
+        let screen = format!(
+            r"
+ spacejunk
+ /data  8.5 GiB  ·  4 files  ·  3 dirs  ·  1 errors (e: list)  ·  0.25s
+┌ Could not read (1) ──────────────────────────────────────────────────────────┐
+{row}
+{bottom}
+ /data{sep}photos{sep}private
+ ↑↓  move   o  file manager   e/Esc  back to the tree   r  rescan   q  quit"
         );
         assert_eq!(lines(&buf), expected(&screen));
     }

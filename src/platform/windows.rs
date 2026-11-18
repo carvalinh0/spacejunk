@@ -182,6 +182,9 @@ fn explorer_arg(path: &Path, is_dir: bool) -> OsString {
     arg
 }
 
+/// Shown under the list of folders that could not be read.
+pub const ELEVATE_HINT: &str = "Run spacejunk as administrator to read them";
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,12 +11,12 @@ use std::thread;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub use unix::{file_manager, is_packaged, list, root};
+pub use unix::{ELEVATE_HINT, file_manager, is_packaged, list, root};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{file_manager, is_packaged, list, root};
+pub use windows::{ELEVATE_HINT, file_manager, is_packaged, list, root};
 
 pub struct Root {
     pub is_dir: bool,

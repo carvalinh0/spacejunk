@@ -104,6 +104,7 @@ below has them all.
 | `Enter` / `Space` | open/close |
 | `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
 | `f` | largest files: the 1000 biggest files of the scan in one list (`o` shows one, `f`/`Esc` back to the tree) |
+| `e` | folders that could not be read, with the reason (`o` shows one, `e`/`Esc` back to the tree) |
 | `PgUp` `PgDn` `g` `G` | scroll / top / bottom |
 | `r` | rescan |
 | `Esc` | back to the disk list (cancels a running scan) |
@@ -117,7 +118,9 @@ spacejunk **only reads**: nothing is ever deleted or changed.
   On Windows, OneDrive files that live only in the cloud count as 0.
 - Hard links are counted once (on Windows this keeps `WinSxS` from being counted twice); symlinks and junctions are not followed.
 - Other filesystems mounted inside the target are not crossed (scanning `/` skips `/proc`, `/mnt/c`, ...).
-- Folders you cannot read are counted under `errors`. Run with `sudo` (or as Administrator) to see everything.
+- Folders you cannot read are counted under `errors`; `e` lists them with the reason. Run with `sudo`
+  (or as Administrator) to see everything. On macOS, some folders (Mail, Messages...) also need
+  Full Disk Access for your terminal app (System Settings > Privacy & Security).
 
 ## Performance
 
