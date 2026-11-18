@@ -5,16 +5,7 @@
 Find out what is eating your disk. A Rust TUI that scans a disk and shows a tree of folders
 from **heaviest to lightest**, updated **live** while the scan runs.
 
-```
- /  68.5 GiB  ·  755472 files  ·  136292 dirs  ·  32 errors  ·  0.30s
-┌──────────────────────────────────────────────────────────────────────────┐
-│  68.5 GiB  100.0% ████████████ ▾ /                                       │
-│  65.2 GiB   95.1% ███████████▍   ▾ home/                                 │
-│  65.2 GiB  100.0% ████████████     ▸ user/                               │
-│   2.7 GiB    4.0% ▌              ▸ usr/                                  │
-│ 621.2 MiB    0.9% ▏              ▸ var/                                  │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<img width="1920" height="1080" alt="spacejunk-store-1" src="https://github.com/user-attachments/assets/1711ed24-ebe8-4d47-b1bf-a3bcefe69f1b" />
 
 ## Install
 
