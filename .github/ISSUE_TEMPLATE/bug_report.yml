@@ -1,0 +1,107 @@
+name: Bug report
+description: Something does not work, crashes, or shows wrong sizes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! spacejunk only reads your disk, so please also tell us if anything
+        looks like it was changed: that would be a serious bug.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `spacejunk /some/path`
+        2. Open the `foo/` folder
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: spacejunk version
+      description: Output of `spacejunk --version`.
+      placeholder: spacejunk 0.1.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Windows (inside WSL)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os-details
+    attributes:
+      label: OS version and CPU
+      placeholder: Ubuntu 26.04 x86_64 / macOS 16 Apple Silicon / Windows 11 ARM64
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Install script (install.sh / install.ps1)
+        - cargo install spacejunk
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: Display problems often depend on it.
+      placeholder: Windows Terminal, GNOME Terminal, iTerm2, Alacritty, tmux...
+
+  - type: input
+    id: filesystem
+    attributes:
+      label: Filesystem of the scanned path
+      description: Run `df -T <path>` on Linux, `diskutil info <path>` on macOS, or check the drive properties on Windows.
+      placeholder: ext4, btrfs, APFS, NTFS, exFAT, 9p (WSL /mnt/c), network share...
+
+  - type: textarea
+    id: sizes
+    attributes:
+      label: If sizes look wrong
+      description: |
+        spacejunk counts the space actually used on disk (like `du`), not the apparent file size.
+        Please paste what it shows next to what another tool shows for the same path:
+        `spacejunk --scan <path>` and `du -sh <path>` (Linux/macOS), or "Size on disk" from the folder properties (Windows).
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or anything else
+      description: A screenshot of the terminal helps a lot for display bugs.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I am on the latest version (spacejunk shows a notice in the title bar when there is a newer one).
