@@ -260,8 +260,9 @@ impl App {
         }
     }
 
-    /// The wheel moves the selection; a click selects a line, and a click on
-    /// the selected line does what Enter does (open a folder, scan a disk).
+    /// The selection follows the pointer and the wheel; a click on the
+    /// selected line does what Enter does (open a folder, scan a disk). In
+    /// terminals that report no pointer moves, the first click selects.
     pub fn on_mouse(&mut self, m: MouseEvent) {
         if self.input.is_some() || self.confirm.is_some() {
             return;
@@ -270,23 +271,33 @@ impl App {
         match m.kind {
             MouseEventKind::ScrollDown => (0..3).for_each(|_| self.on_key(key(KeyCode::Down))),
             MouseEventKind::ScrollUp => (0..3).for_each(|_| self.on_key(key(KeyCode::Up))),
-            MouseEventKind::Down(MouseButton::Left) => self.click(m.column, m.row),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.point_at(m.column, m.row) == Some(true) {
+                    self.on_key(key(KeyCode::Enter));
+                }
+            }
+            MouseEventKind::Moved => {
+                self.point_at(m.column, m.row);
+            }
             _ => {}
         }
     }
 
-    fn click(&mut self, x: u16, y: u16) {
+    /// Selects the line under the pointer, if there is one; says whether it
+    /// was selected already.
+    fn point_at(&mut self, x: u16, y: u16) -> Option<bool> {
         if !self.list_area.contains(Position { x, y }) {
-            return;
+            return None;
         }
         let line = usize::from(y - self.list_area.y);
         let (selected, offset, len) = self.current_list();
         let target = offset + line;
-        if target == *selected {
-            self.on_key(KeyEvent::from(KeyCode::Enter));
-        } else if target < len {
-            *selected = target;
+        if target >= len {
+            return None;
         }
+        let already = *selected == target;
+        *selected = target;
+        Some(already)
     }
 
     /// The selection, first visible line and length of the list on screen.
@@ -878,6 +889,22 @@ mod tests {
         };
         assert_eq!(view.rows.len(), 4, "a opened");
         assert_eq!(selected_name(view), "a");
+    }
+
+    #[test]
+    fn the_selection_follows_the_pointer_and_a_click_then_opens() {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1); // /r, a/, small
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.list_area = Rect::new(1, 3, 78, 6);
+        app.on_mouse(mouse(MouseEventKind::Moved, 5));
+        assert_eq!(selected_name(tree(&app)), "small");
+        app.on_mouse(mouse(MouseEventKind::Moved, 8)); // below the last row
+        app.on_mouse(mouse(MouseEventKind::Moved, 1)); // outside the list
+        assert_eq!(selected_name(tree(&app)), "small", "kept");
+        app.on_mouse(mouse(MouseEventKind::Moved, 4));
+        assert_eq!(tree(&app).rows.len(), 3, "pointing does not open");
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 4));
+        assert_eq!(tree(&app).rows.len(), 4, "one click opens a/");
     }
 
     #[test]
