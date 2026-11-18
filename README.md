@@ -115,6 +115,7 @@ below has them all.
 | `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
 | `f` | largest files: the 1000 biggest files of the scan in one list (`o` shows one, `f`/`Esc` back to the tree) |
 | `e` | folders that could not be read, with the reason (`o` shows one, `e`/`Esc` back to the tree) |
+| `d` | move the selected folder or file to the Recycle Bin / Trash, after you confirm with `y` (also in the `f` list) |
 | `PgUp` `PgDn` `g` `G` | scroll / top / bottom |
 | `r` | rescan |
 | `Esc` | back to the disk list (cancels a running scan) |
@@ -124,7 +125,11 @@ The mouse works too: the wheel moves the selection, a click selects a line, and 
 selected line opens it (like `Enter`). To select text in the terminal while spacejunk runs, hold
 `Shift` while dragging (`Option` in macOS Terminal and iTerm2).
 
-spacejunk **only reads**: nothing is ever deleted or changed.
+spacejunk **only reads**, except when you press `d` and confirm with `y`: then it moves that one
+folder or file to the Recycle Bin (Windows) or the Trash (macOS, Linux), from where you can restore
+it. Nothing is ever deleted for good, and the space is only freed when you empty the trash. `d`
+works once the scan has finished, and refuses the scanned folder itself, your home folder, drive
+roots and the system's folders (`C:\Windows`, `Program Files`, `/usr`, `/etc`...).
 
 ## How sizes are counted
 

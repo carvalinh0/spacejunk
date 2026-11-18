@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective date: November 18, 2026
+Effective date: November 18, 2026 (updated for the `d` key, version 1.1.0)
 
 spacejunk is a disk usage analyzer that runs on your computer. It does not collect, store or
 share personal information, and it has no telemetry, analytics, ads or accounts.
@@ -9,8 +9,11 @@ share personal information, and it has no telemetry, analytics, ads or accounts.
 
 To show how much space folders take, spacejunk reads the names and sizes of files and folders on
 the drives or paths you choose. This information is only shown on your screen while the program
-runs. It is never saved, and it never leaves your computer. spacejunk never changes or deletes
-any file.
+runs. It is never saved, and it never leaves your computer.
+
+spacejunk changes nothing on its own. The only change it can make is the one you ask for: when you
+press `d` and confirm, it moves that folder or file to the Recycle Bin (Windows) or the Trash
+(macOS, Linux), from where you can restore it. It never deletes anything for good.
 
 ## Network access
 

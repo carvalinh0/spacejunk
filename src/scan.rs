@@ -27,6 +27,9 @@ pub struct Node {
     /// Set once, when the directory has been listed; never moves afterwards,
     /// so worker threads can keep `&Node`s into it.
     children: OnceLock<Box<[Node]>>,
+    /// Moved to the trash by the user. Children cannot be taken out of the
+    /// slice (see above), so a removed node stays and is skipped.
+    removed: AtomicBool,
 }
 
 impl Node {
@@ -37,6 +40,7 @@ impl Node {
             expanded: AtomicBool::new(false),
             size: AtomicU64::new(size),
             children: OnceLock::new(),
+            removed: AtomicBool::new(false),
         }
     }
 
@@ -63,7 +67,22 @@ impl Node {
     }
 
     pub fn can_expand(&self) -> bool {
-        self.is_pending() || !self.children().is_empty()
+        self.is_pending() || self.children().iter().any(|c| !c.is_removed())
+    }
+
+    pub fn is_removed(&self) -> bool {
+        self.removed.load(Relaxed)
+    }
+
+    /// The user moved this entry to the trash: it leaves the tree, and its
+    /// size leaves every ancestor (`ancestors` from the root down). Only
+    /// after the scan, which would otherwise keep adding to it.
+    pub fn remove(&self, ancestors: &[&Node]) {
+        let size = self.size.swap(0, Relaxed);
+        for a in ancestors {
+            a.size.fetch_sub(size, Relaxed);
+        }
+        self.removed.store(true, Relaxed);
     }
 }
 

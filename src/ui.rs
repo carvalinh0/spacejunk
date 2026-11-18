@@ -126,6 +126,7 @@ fn title_line(app: &App) -> Line<'static> {
         spans.push(Span::raw("  "));
     }
     spans.push(Span::raw(app.message.clone().unwrap_or_default()).red());
+    spans.push(Span::raw(app.notice.clone().unwrap_or_default()).green());
     Line::from(spans)
 }
 
@@ -145,6 +146,18 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             Span::raw("   Enter scan · Esc cancel").dim(),
         ]);
     }
+    if let Some(removal) = &app.confirm {
+        return Line::from(vec![
+            Span::styled(" Delete ", Style::new().reversed().red()),
+            Span::raw(format!(
+                " Move {} ({}) to the {}?",
+                removal.path.display(),
+                human(removal.size),
+                platform::TRASH_NAME
+            )),
+            Span::raw("   y yes · any other key no").dim(),
+        ]);
+    }
     let keys: &[(&str, &str)] = match &app.screen {
         Screen::Disks => &[
             ("↑↓", "move"),
@@ -157,6 +170,7 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             Some(Panel::Files(_)) => &[
                 ("↑↓", "move"),
                 ("o", "file manager"),
+                ("d", "delete"),
                 ("f/Esc", "back to the tree"),
                 ("r", "rescan"),
                 ("q", "quit"),
@@ -173,6 +187,7 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
                 ("→/←", "open/close"),
                 ("f", "largest files"),
                 ("o", "file manager"),
+                ("d", "delete"),
                 ("e", "errors"),
                 ("r", "rescan"),
                 ("Esc", "disks"),
@@ -586,7 +601,7 @@ mod tests {
 │   4.0 KiB    0.0%              notes.txt                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
  /data{sep}videos{sep}movie.mkv
- ↑↓  move   o  file manager   f/Esc  back to the tree   r  rescan   q  quit"
+ ↑↓  move   o  file manager   d  delete   f/Esc  back to the tree   q  quit"
         );
         assert_eq!(lines(&buf), expected(&screen));
     }
@@ -620,6 +635,21 @@ mod tests {
  ↑↓  move   o  file manager   e/Esc  back to the tree   r  rescan   q  quit"
         );
         assert_eq!(lines(&buf), expected(&screen));
+    }
+
+    #[test]
+    fn delete_asks_in_the_footer() {
+        let mut app = tree_app();
+        app.on_key(ratatui::crossterm::event::KeyCode::Down.into()); // videos/
+        app.on_key(ratatui::crossterm::event::KeyCode::Char('d').into());
+        let buf = render(&mut app, 100, 12);
+        let path = PathBuf::from("/data").join("videos");
+        let trash = platform::TRASH_NAME;
+        let want = format!(
+            " Delete  Move {} (6.5 GiB) to the {trash}?   y yes · any other key no",
+            path.display()
+        );
+        assert_eq!(lines(&buf)[11], want);
     }
 
     #[test]
