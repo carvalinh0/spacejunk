@@ -1,6 +1,6 @@
 # Builds the Microsoft Store upload: one MSIX per architecture, bundled into a
 # .msixbundle, plus the same bundle zipped as .msixupload (what Partner Center
-# recommends and what `msstore publish` accepts; it takes no .msixbundle). Nothing is signed: the Store re-signs the package with a
+# recommends uploading). Nothing is signed: the Store re-signs the package with a
 # Microsoft certificate after certification (which is also what gets past
 # Smart App Control). An unsigned bundle cannot be installed by hand.
 #

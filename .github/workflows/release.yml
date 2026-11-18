@@ -16,9 +16,10 @@
 #   5. `publish-release` publishes the draft once every binary is attached.
 #   6. `store-package` bundles the two Windows binaries into
 #      spacejunk-<tag>.msixbundle (+ .msixupload), kept as a workflow artifact
-#      (not a release asset: it is unsigned until the Store re-signs it). With
-#      the STORE_* secrets set, it also submits the .msixupload to the
-#      Microsoft Store; without them, upload it by hand in Partner Center.
+#      (not a release asset: it is unsigned until the Store re-signs it).
+#      Upload the .msixupload by hand in Partner Center as a new submission:
+#      automatic submission (msstore CLI) needs a Microsoft Entra app, which
+#      the maintainer's individual developer account could not set up.
 #
 # Why a draft: the repository uses immutable releases, which refuse assets
 # once a release is published (v0.1.0 shipped without binaries because of
@@ -30,9 +31,6 @@
 #
 # Required secret: CARGO_REGISTRY_TOKEN (crates.io API token with scopes publish-new
 # and publish-update).
-# Optional secrets, all four or none: STORE_TENANT_ID, STORE_CLIENT_ID,
-# STORE_CLIENT_SECRET (a Microsoft Entra app with the Manager role in Partner
-# Center) and STORE_SELLER_ID.
 # Required setting: Settings > Actions > General > "Allow GitHub Actions to
 # create and approve pull requests".
 
@@ -165,32 +163,6 @@ jobs:
             spacejunk-*.msixbundle
             spacejunk-*.msixupload
           if-no-files-found: error
-      - name: Check for Microsoft Store credentials
-        id: store
-        shell: bash
-        env:
-          TENANT: ${{ secrets.STORE_TENANT_ID }}
-        run: echo "configured=$([ -n "$TENANT" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      # Installs the Microsoft Store Developer CLI (msstore).
-      - if: steps.store.outputs.configured == 'true'
-        uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
-      # Creates a submission with the new package and commits it; the Store
-      # keeps the listing, age rating and everything else from the last one.
-      # Certification then takes hours to a few days.
-      - name: Submit to the Microsoft Store
-        if: steps.store.outputs.configured == 'true'
-        shell: pwsh
-        env:
-          STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
-          STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
-          STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
-          STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
-        run: |
-          msstore reconfigure --tenantId $env:STORE_TENANT_ID --sellerId $env:STORE_SELLER_ID `
-            --clientId $env:STORE_CLIENT_ID --clientSecret $env:STORE_CLIENT_SECRET
-          if ($LASTEXITCODE) { throw 'msstore reconfigure failed' }
-          msstore publish "spacejunk-$env:TAG.msixupload" --appId 9NLB9QFQQRW3
-          if ($LASTEXITCODE) { throw 'msstore publish failed' }
 
   release-pr:
     name: Open release PR (version bump)
