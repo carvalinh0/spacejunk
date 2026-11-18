@@ -128,6 +128,34 @@ pub fn junk_folders(root: &Node, n: usize) -> Vec<Listed> {
     )
 }
 
+/// The `n` largest files and folders whose name contains `query`, ignoring
+/// case, largest first. A matching folder is searched too.
+pub fn search(root: &Node, query: &str, n: usize) -> Vec<Listed> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let query = query.to_lowercase();
+    top(root, n, &|node, _, _| {
+        (
+            contains_ignoring_case(&node.name, &query).then_some(""),
+            true,
+        )
+    })
+}
+
+/// `query` is lowercase already. ASCII names, nearly all of them, are
+/// compared without allocating: a search runs on every key typed.
+fn contains_ignoring_case(name: &str, query: &str) -> bool {
+    if name.is_ascii() && query.is_ascii() {
+        let query = query.as_bytes();
+        name.as_bytes()
+            .windows(query.len())
+            .any(|w| w.eq_ignore_ascii_case(query))
+    } else {
+        name.to_lowercase().contains(query)
+    }
+}
+
 /// For each entry (with its parent and path), `pick` says whether to list it
 /// (with its tag) and whether to look inside it.
 type Pick<'a> = &'a dyn Fn(&Node, &Node, &Path) -> (Option<&'static str>, bool);
@@ -301,6 +329,37 @@ mod tests {
             PathBuf::from("/r/web/node_modules"),
             "not the nested one"
         );
+    }
+
+    #[test]
+    fn search_matches_names_ignoring_case_folders_and_files() {
+        let root = Node::fake_dir(
+            "/r",
+            vec![
+                Node::fake_dir("Photos", vec![Node::fake_file("photo.JPG", 30)]),
+                Node::fake_dir("music", vec![Node::fake_file("song.mp3", 50)]),
+                Node::fake_dir("Ação", vec![Node::fake_file("ÇÃO.txt", 2)]),
+            ],
+        );
+        let names = |q: &str| -> Vec<(String, bool)> {
+            search(&root, q, 10)
+                .iter()
+                .map(|l| {
+                    (
+                        l.path.file_name().unwrap().to_string_lossy().into_owned(),
+                        l.is_dir,
+                    )
+                })
+                .collect()
+        };
+        let photo = |name: &str, dir| (name.to_owned(), dir);
+        assert_eq!(
+            names("PHOTO"),
+            [photo("Photos", true), photo("photo.JPG", false)]
+        );
+        assert_eq!(names("ção"), [photo("Ação", true), photo("ÇÃO.txt", false)]);
+        assert_eq!(names("zzz"), []);
+        assert_eq!(names(""), [], "an empty search lists nothing");
     }
 
     #[test]

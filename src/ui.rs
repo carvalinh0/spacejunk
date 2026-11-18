@@ -147,6 +147,17 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             Span::raw("   Enter scan · Esc cancel").dim(),
         ]);
     }
+    if app.searching
+        && let Screen::Tree(view) = &app.screen
+        && let Some(Panel::List(list)) = view.panel.as_deref()
+    {
+        return Line::from(vec![
+            Span::styled(" Search ", Style::new().reversed()),
+            Span::raw(format!(" {}", list.query)),
+            Span::styled("█", Style::new().add_modifier(Modifier::SLOW_BLINK)),
+            Span::raw("   Enter browse results · Esc cancel").dim(),
+        ]);
+    }
     if let Some(removal) = &app.confirm {
         return Line::from(vec![
             Span::styled(" Delete ", Style::new().reversed().red()),
@@ -176,12 +187,20 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
                 ("r", "rescan"),
                 ("q", "quit"),
             ],
-            Some(Panel::List(_)) => &[
+            Some(Panel::List(list)) if list.kind == ListKind::Junk => &[
                 ("↑↓", "move"),
                 ("o", "file manager"),
                 ("d", "delete"),
                 ("c/Esc", "back to the tree"),
                 ("r", "rescan"),
+                ("q", "quit"),
+            ],
+            Some(Panel::List(_)) => &[
+                ("↑↓", "move"),
+                ("o", "file manager"),
+                ("d", "delete"),
+                ("/", "edit search"),
+                ("Esc", "back to the tree"),
                 ("q", "quit"),
             ],
             Some(Panel::Errors(_)) => &[
@@ -194,6 +213,7 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
             None => &[
                 ("↑↓", "move"),
                 ("→/←", "open/close"),
+                ("/", "search"),
                 ("f", "largest files"),
                 ("c", "junk"),
                 ("o", "file manager"),
@@ -368,11 +388,18 @@ fn draw_list(
                 .title(format!(" Junk: {}, {} ", folders(items.len()), human(junk)))
                 .title_bottom(" Rebuilt by the programs that made them when needed ")
         }
+        ListKind::Search => Block::bordered().title(format!(
+            " Search \"{}\": {} ",
+            view.query,
+            matches(items.len())
+        )),
     };
     if items.is_empty() {
         let text = match view.kind {
             ListKind::LargestFiles => " No files yet.",
             ListKind::Junk => " No junk found: no caches, build folders or temporary files.",
+            ListKind::Search if view.query.is_empty() => " Type part of a file or folder name.",
+            ListKind::Search => " Nothing with that in its name.",
         };
         f.render_widget(Paragraph::new(text).block(block), list);
         return;
@@ -441,6 +468,14 @@ fn draw_errors(
     f.render_stateful_widget(table, list, &mut state);
     let path = &failed[nav.selected].0;
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
+}
+
+fn matches(n: usize) -> String {
+    match n {
+        1 => "1 match".to_owned(),
+        n if n >= crate::app::LIST_LIMIT => format!("the {n} largest matches"),
+        n => format!("{n} matches"),
+    }
 }
 
 fn folders(n: usize) -> String {
@@ -627,7 +662,7 @@ mod tests {
 │   4.0 KiB    0.0%                  notes.txt                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
  /data
- ↑↓  move   →/←  open/close   f  largest files   c  junk   q  quit";
+ ↑↓  move   →/←  open/close   /  search   f  largest files   c  junk   q  quit";
         assert_eq!(lines(&buf), expected(screen));
     }
 
@@ -693,6 +728,27 @@ mod tests {
             lines(&buf),
             expected(&screen.replace("/code/", &format!("/code{sep}")))
         );
+    }
+
+    #[test]
+    fn search_lists_matches_while_typing() {
+        let mut app = tree_app();
+        for c in "/mov".chars() {
+            app.on_key(ratatui::crossterm::event::KeyCode::Char(c).into());
+        }
+        let buf = render(&mut app, 80, 7);
+        let sep = std::path::MAIN_SEPARATOR;
+        let screen = format!(
+            r#"
+ spacejunk
+ /data  8.5 GiB  ·  4 files  ·  3 dirs  ·  0 errors  ·  0.25s
+┌ Search "mov": 1 match ───────────────────────────────────────────────────────┐
+│   6.0 GiB   70.6% ████████▌    videos{sep}movie.mkv                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ /data{sep}videos{sep}movie.mkv
+ Search  mov█   Enter browse results · Esc cancel"#
+        );
+        assert_eq!(lines(&buf), expected(&screen));
     }
 
     #[test]
