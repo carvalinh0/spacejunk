@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0](https://github.com/carvalinh0/spacejunk/compare/v1.0.1...v1.1.0) - 2026-11-18
+
+### Added
+
+- JSON output for --scan (--json) ([#18](https://github.com/carvalinh0/spacejunk/pull/18))
+- mouse support ([#17](https://github.com/carvalinh0/spacejunk/pull/17))
+- list the folders that could not be read (e) ([#16](https://github.com/carvalinh0/spacejunk/pull/16))
+- largest files list (f) ([#15](https://github.com/carvalinh0/spacejunk/pull/15))
+- show the selected folder or file in the file manager (o) ([#14](https://github.com/carvalinh0/spacejunk/pull/14))
+
+### Fixed
+
+- require Rust 1.95, the real minimum, and check it in CI ([#11](https://github.com/carvalinh0/spacejunk/pull/11))
+
+### Other
+
+- render whole screens with ratatui's TestBackend ([#12](https://github.com/carvalinh0/spacejunk/pull/12))
+
 ## [1.0.1](https://github.com/carvalinh0/spacejunk/compare/v1.0.0...v1.0.1) - 2026-11-18
 
 ### Other
