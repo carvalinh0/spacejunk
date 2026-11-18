@@ -114,6 +114,7 @@ below has them all.
 | `Enter` / `Space` | open/close |
 | `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
 | `f` | largest files: the 1000 biggest files of the scan in one list (`o` shows one, `f`/`Esc` back to the tree) |
+| `c` | junk: caches, build folders and temporary files that programs rebuild when needed, largest first (`d` moves one to the trash, `c`/`Esc` back to the tree). Junk folders are also marked in the tree |
 | `e` | folders that could not be read, with the reason (`o` shows one, `e`/`Esc` back to the tree) |
 | `d` | move the selected folder or file to the Recycle Bin / Trash, after you confirm with `y` (also in the `f` list) |
 | `PgUp` `PgDn` `g` `G` | scroll / top / bottom |
@@ -131,6 +132,19 @@ folder or file to the Recycle Bin (Windows) or the Trash (macOS, Linux), from wh
 it. Nothing is ever deleted for good, and the space is only freed when you empty the trash. `d`
 works once the scan has finished, and refuses the scanned folder itself, your home folder, drive
 roots and the system's folders (`C:\Windows`, `Program Files`, `/usr`, `/etc`...).
+
+## What counts as junk
+
+Only folders that the program that made them rebuilds on its own, so deleting them costs a
+download or a rebuild, never data:
+
+- any folder with a `CACHEDIR.TAG` file ([Cache Directory Tagging](https://bford.info/cachedir/):
+  Cargo's `target/`, Gradle's caches...);
+- `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, Xcode's `DerivedData`, `.cache`;
+- `node_modules` next to a `package.json` and a lockfile, and `.next`, `.nuxt`, `.parcel-cache`,
+  `.turbo` next to a `package.json` (an app's own `node_modules`, like VS Code's, is not junk);
+- `.gradle` inside a Gradle project (not `~/.gradle`, which holds your `gradle.properties`);
+- your temporary files (`AppData\Local\Temp`), `~/Library/Caches` on macOS, and `C:\Windows.old`.
 
 ## How sizes are counted
 
