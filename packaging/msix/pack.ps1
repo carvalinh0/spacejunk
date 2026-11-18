@@ -1,5 +1,6 @@
 # Builds the Microsoft Store upload: one MSIX per architecture, bundled into a
-# .msixbundle. Nothing is signed: the Store re-signs the package with a
+# .msixbundle, plus the same bundle zipped as .msixupload (what Partner Center
+# recommends and what `msstore publish` accepts; it takes no .msixbundle). Nothing is signed: the Store re-signs the package with a
 # Microsoft certificate after certification (which is also what gets past
 # Smart App Control). An unsigned bundle cannot be installed by hand.
 #
@@ -51,4 +52,8 @@ foreach ($arch in $Exe.Keys) {
 
 & $makeappx bundle /o /bv $version /d $packages /p $Out
 if ($LASTEXITCODE) { throw 'makeappx bundle failed' }
-Write-Host "Created $Out (version $version)"
+# Compress-Archive only writes .zip files.
+$upload = [IO.Path]::ChangeExtension($Out, '.msixupload')
+Compress-Archive -Path $Out -DestinationPath "$upload.zip" -Force
+Move-Item -Force "$upload.zip" $upload
+Write-Host "Created $Out and $upload (version $version)"
