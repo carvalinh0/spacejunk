@@ -110,6 +110,10 @@ below has them all.
 | `Esc` | back to the disk list (cancels a running scan) |
 | `q` | quit |
 
+The mouse works too: the wheel moves the selection, a click selects a line, and a click on the
+selected line opens it (like `Enter`). To select text in the terminal while spacejunk runs, hold
+`Shift` while dragging (`Option` in macOS Terminal and iTerm2).
+
 spacejunk **only reads**: nothing is ever deleted or changed.
 
 ## How sizes are counted

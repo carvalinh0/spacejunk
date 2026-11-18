@@ -9,7 +9,10 @@ use std::sync::mpsc::Receiver;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use rayon::ThreadPool;
 use sysinfo::Disks;
 
@@ -85,6 +88,10 @@ pub struct App {
     /// A newer version published on crates.io, once the background check answers.
     pub update: Option<String>,
     pub quit: bool,
+    /// Where the current list's lines were drawn, for mouse clicks.
+    pub list_area: Rect,
+    /// First disk shown, when the disk list scrolls.
+    pub disk_offset: usize,
     pool: Arc<ThreadPool>,
     update_rx: Receiver<String>,
 }
@@ -178,6 +185,8 @@ impl App {
             message: None,
             update: None,
             quit: false,
+            list_area: Rect::default(),
+            disk_offset: 0,
             pool: Arc::new(build_pool()),
             update_rx: update::spawn_check(),
         };
@@ -230,6 +239,51 @@ impl App {
         match self.screen {
             Screen::Disks => self.on_key_disks(key.code),
             Screen::Tree(_) => self.on_key_tree(key.code),
+        }
+    }
+
+    /// The wheel moves the selection; a click selects a line, and a click on
+    /// the selected line does what Enter does (open a folder, scan a disk).
+    pub fn on_mouse(&mut self, m: MouseEvent) {
+        if self.input.is_some() {
+            return;
+        }
+        let key = |code: KeyCode| KeyEvent::from(code);
+        match m.kind {
+            MouseEventKind::ScrollDown => (0..3).for_each(|_| self.on_key(key(KeyCode::Down))),
+            MouseEventKind::ScrollUp => (0..3).for_each(|_| self.on_key(key(KeyCode::Up))),
+            MouseEventKind::Down(MouseButton::Left) => self.click(m.column, m.row),
+            _ => {}
+        }
+    }
+
+    fn click(&mut self, x: u16, y: u16) {
+        if !self.list_area.contains(Position { x, y }) {
+            return;
+        }
+        let line = usize::from(y - self.list_area.y);
+        let (selected, offset, len) = self.current_list();
+        let target = offset + line;
+        if target == *selected {
+            self.on_key(KeyEvent::from(KeyCode::Enter));
+        } else if target < len {
+            *selected = target;
+        }
+    }
+
+    /// The selection, first visible line and length of the list on screen.
+    fn current_list(&mut self) -> (&mut usize, usize, usize) {
+        let Screen::Tree(view) = &mut self.screen else {
+            let len = self.disks.len();
+            return (&mut self.disk_selected, self.disk_offset, len);
+        };
+        match view.panel.as_deref_mut() {
+            None => (&mut view.selected, view.offset, view.rows.len()),
+            Some(Panel::Files(f)) => (&mut f.nav.selected, f.nav.offset, f.files.len()),
+            Some(Panel::Errors(nav)) => {
+                let len = view.progress.failed.lock().unwrap().len();
+                (&mut nav.selected, nav.offset, len)
+            }
         }
     }
 
@@ -564,6 +618,8 @@ impl App {
             message: None,
             update: None,
             quit: false,
+            list_area: Rect::default(),
+            disk_offset: 0,
             pool: Arc::new(
                 rayon::ThreadPoolBuilder::new()
                     .num_threads(1)
@@ -704,6 +760,52 @@ mod tests {
         assert_eq!(panel(&app), "files");
         app.on_key(KeyCode::Char('f').into());
         assert_eq!(panel(&app), "tree");
+    }
+
+    fn mouse(kind: MouseEventKind, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 10,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn click_selects_a_line_and_a_second_click_opens_it() {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1); // /r, a/, small
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.list_area = Rect::new(1, 3, 78, 6);
+        let click = MouseEventKind::Down(MouseButton::Left);
+        app.on_mouse(mouse(click, 4));
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(selected_name(view), "a");
+        assert_eq!(view.rows.len(), 3);
+        app.on_mouse(mouse(click, 4));
+        app.on_mouse(mouse(click, 1)); // outside the list: ignored
+        app.on_mouse(mouse(click, 8)); // below the last row: ignored
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(view.rows.len(), 4, "a opened");
+        assert_eq!(selected_name(view), "a");
+    }
+
+    #[test]
+    fn wheel_moves_the_selection_three_lines() {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1);
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.on_key(KeyCode::Char('f').into());
+        app.on_mouse(mouse(MouseEventKind::ScrollDown, 0));
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        let Some(Panel::Files(files)) = view.panel.as_deref() else {
+            panic!("files view not open")
+        };
+        assert_eq!(files.nav.selected, 1, "clamped to the last of 2 files");
     }
 
     #[test]
