@@ -121,8 +121,9 @@ below has them all.
 | `Esc` | back to the disk list (cancels a running scan) |
 | `q` | quit |
 
-The mouse works too: the wheel moves the selection, a click selects a line, and a click on the
-selected line opens it (like `Enter`). To select text in the terminal while spacejunk runs, hold
+The mouse works too: the selection follows the pointer and the wheel, and a click opens the line
+under the pointer (like `Enter`). In terminals that do not report pointer moves, the first click
+selects and the second opens. To select text in the terminal while spacejunk runs, hold
 `Shift` while dragging (`Option` in macOS Terminal and iTerm2).
 
 spacejunk **only reads**, except when you press `d` and confirm with `y`: then it moves that one
