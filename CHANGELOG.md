@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0](https://github.com/carvalinh0/spacejunk/releases/tag/v1.0.0) - 2026-11-18
+
+First stable release: the command line, the keys and the `--scan` output keep working the way
+they do now. 1.0 is also the first version the Microsoft Store accepts (it refuses versions
+starting with 0).
+
+### Added
+
+- Microsoft Store package (x64 and arm64), re-signed by Microsoft so Smart App Control lets it run
+
+### Changed
+
+- the Microsoft Store version does not show the update notice: the Store updates it
+
 ## [0.1.1](https://github.com/carvalinh0/spacejunk/releases/tag/v0.1.1) - 2026-11-18
 
 No code changes. First release with prebuilt binaries attached, so the install
