@@ -12,7 +12,7 @@ use std::path::Path;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+    APPMODEL_ERROR_NO_PACKAGE, CloseHandle, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
@@ -20,6 +20,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdBothDirectoryInfo, GetFileInformationByHandleEx,
     OPEN_EXISTING,
 };
+use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 
 use super::{Entry, Root};
 
@@ -143,5 +144,24 @@ pub fn list(path: &Path, _dev: u64, mut found: impl FnMut(Entry)) -> io::Result<
             }
             offset += info.NextEntryOffset as usize;
         }
+    }
+}
+
+/// Running from an MSIX package (the Microsoft Store build), which Windows
+/// updates by itself.
+pub fn is_packaged() -> bool {
+    let mut len = 0;
+    // SAFETY: with a zero length the API only writes the needed length.
+    let err = unsafe { GetCurrentPackageFullName(&raw mut len, ptr::null_mut()) };
+    err != APPMODEL_ERROR_NO_PACKAGE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_runs_tests_unpackaged() {
+        assert!(!is_packaged());
     }
 }

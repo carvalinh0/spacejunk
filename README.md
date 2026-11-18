@@ -74,7 +74,8 @@ with a 5 s timeout). If there is a newer one, the title bar shows:
 ```
 
 Offline or without `curl`, nothing happens. The request only carries the program name, its version
-and the repository URL (in the User-Agent, as crates.io asks).
+and the repository URL (in the User-Agent, as crates.io asks). The Microsoft Store version skips the
+check: the Store updates it.
 
 ## Usage
 
@@ -150,7 +151,8 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 `fix:` makes a patch, `feat:` a minor, `feat!:` a major. Every push to `main` opens/updates a release
 PR with the new version and the CHANGELOG; merging it creates the tag, publishes the crate to crates.io
 and attaches the Linux (x86_64/arm64, static), macOS (Intel/Apple Silicon) and Windows (x64/arm64)
-binaries to the GitHub Release, each with its `.sha256`.
+binaries to the GitHub Release, each with its `.sha256`. The same run builds the Microsoft Store
+bundle (`packaging/msix/`) as a workflow artifact, to upload in Partner Center.
 
 Requires the `CARGO_REGISTRY_TOKEN` secret in the repository.
 

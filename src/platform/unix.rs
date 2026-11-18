@@ -44,3 +44,8 @@ pub fn list(path: &Path, dev: u64, mut found: impl FnMut(Entry)) -> io::Result<u
     }
     Ok(errors)
 }
+
+/// MSIX packages only exist on Windows.
+pub fn is_packaged() -> bool {
+    false
+}

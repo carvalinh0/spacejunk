@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store package. pack.ps1 fills in {VERSION} and {ARCH}.
+  Identity Name, Publisher and PublisherDisplayName must match Partner Center
+  (Product management > Product identity) character for character.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 desktop4 rescap">
+
+  <Identity
+    Name="Carvalinho.spacejunk"
+    Publisher="CN=92D52859-1453-44B3-81F9-89942B0CB771"
+    Version="{VERSION}"
+    ProcessorArchitecture="{ARCH}" />
+
+  <Properties>
+    <DisplayName>spacejunk</DisplayName>
+    <PublisherDisplayName>Carvalinho</PublisherDisplayName>
+    <Logo>Images\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 1809: the oldest Windows that runs packaged console apps with an alias. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- Console subsystem: launched from the Start menu, it opens in a terminal window. -->
+    <Application
+      Id="spacejunk"
+      Executable="spacejunk.exe"
+      EntryPoint="Windows.FullTrustApplication"
+      desktop4:Subsystem="console"
+      desktop4:SupportsMultipleInstances="true">
+      <uap:VisualElements
+        DisplayName="spacejunk"
+        Description="Fast TUI disk usage analyzer: shows a tree of folders from heaviest to lightest"
+        BackgroundColor="transparent"
+        Square150x150Logo="Images\Square150x150Logo.png"
+        Square44x44Logo="Images\Square44x44Logo.png" />
+      <Extensions>
+        <!-- Makes `spacejunk` work in any terminal, like the other install methods. -->
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="spacejunk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias desktop4:Subsystem="console">
+            <uap5:ExecutionAlias Alias="spacejunk.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- A desktop (Win32) app: it reads the whole disk like any program the user runs. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

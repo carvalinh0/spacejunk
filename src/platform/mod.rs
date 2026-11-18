@@ -7,12 +7,12 @@ use std::ffi::OsString;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub use unix::{list, root};
+pub use unix::{is_packaged, list, root};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{list, root};
+pub use windows::{is_packaged, list, root};
 
 pub struct Root {
     pub is_dir: bool,

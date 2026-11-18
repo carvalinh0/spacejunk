@@ -25,6 +25,14 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+      # makeappx validates the manifest and every file it references; the
+      # Store bundle itself is built by release.yml from the release binaries.
+      - name: Microsoft Store package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build
+          ./packaging/msix/pack.ps1 -Exe @{ x64 = 'target/debug/spacejunk.exe' } -Out spacejunk.msixbundle
 
   install-scripts:
     name: install scripts lint

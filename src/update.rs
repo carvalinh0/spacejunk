@@ -10,6 +10,8 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use crate::platform;
+
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const CRATE_URL: &str = "https://crates.io/api/v1/crates/spacejunk";
 /// crates.io asks automated clients to identify themselves.
@@ -24,6 +26,11 @@ const USER_AGENT: &str = concat!(
 /// Receives the newer version, if there is one. Runs in the background.
 pub fn spawn_check() -> Receiver<String> {
     let (tx, rx) = mpsc::channel();
+    // The Microsoft Store updates its package by itself; "rerun the installer"
+    // would put a second copy next to it.
+    if platform::is_packaged() {
+        return rx;
+    }
     thread::spawn(move || {
         let latest = fetch().and_then(|body| parse_latest(&body).map(str::to_owned));
         if let Some(latest) = latest
