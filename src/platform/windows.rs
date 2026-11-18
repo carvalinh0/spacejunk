@@ -9,7 +9,7 @@ use std::fs;
 use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr;
 
@@ -184,6 +184,22 @@ fn explorer_arg(path: &Path, is_dir: bool) -> OsString {
 
 /// Shown under the list of folders that could not be read.
 pub const ELEVATE_HINT: &str = "Run spacejunk as administrator to read them";
+
+pub const TRASH_NAME: &str = "Recycle Bin";
+
+/// Windows itself and the installed programs, wherever they live.
+pub fn system_folders() -> Vec<PathBuf> {
+    [
+        "SystemRoot",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+    ]
+    .iter()
+    .filter_map(std::env::var_os)
+    .map(PathBuf::from)
+    .collect()
+}
 
 #[cfg(test)]
 mod tests {

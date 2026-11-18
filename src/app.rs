@@ -84,7 +84,12 @@ pub struct App {
     pub disk_selected: usize,
     /// Text of the "scan a path" prompt, while it is open.
     pub input: Option<String>,
+    /// An error, in red in the title.
     pub message: Option<String>,
+    /// What just worked (a move to the trash), until the next key.
+    pub notice: Option<String>,
+    /// Waiting for `y` to move this to the trash.
+    pub confirm: Option<Removal>,
     /// A newer version published on crates.io, once the background check answers.
     pub update: Option<String>,
     pub quit: bool,
@@ -94,6 +99,13 @@ pub struct App {
     pub disk_offset: usize,
     pool: Arc<ThreadPool>,
     update_rx: Receiver<String>,
+    /// `platform::trash`; tests put a fake here that only records the path.
+    trash: fn(&Path) -> io::Result<()>,
+}
+
+pub struct Removal {
+    pub path: PathBuf,
+    pub size: u64,
 }
 
 pub fn build_pool() -> ThreadPool {
@@ -163,16 +175,12 @@ fn unescape_mount(s: &str) -> String {
 
 /// The shell would expand `~`; a path typed in the TUI does not go through one.
 fn expand_tilde(s: &str) -> PathBuf {
-    match (s.strip_prefix('~'), home_dir()) {
+    match (s.strip_prefix('~'), platform::home_dir()) {
         (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
             PathBuf::from(format!("{}{rest}", home.to_string_lossy()))
         }
         _ => PathBuf::from(s),
     }
-}
-
-fn home_dir() -> Option<std::ffi::OsString> {
-    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
 }
 
 impl App {
@@ -183,12 +191,15 @@ impl App {
             disk_selected: 0,
             input: None,
             message: None,
+            notice: None,
+            confirm: None,
             update: None,
             quit: false,
             list_area: Rect::default(),
             disk_offset: 0,
             pool: Arc::new(build_pool()),
             update_rx: update::spawn_check(),
+            trash: platform::trash,
         };
         if let Some(path) = start {
             app.start_scan(&path);
@@ -232,6 +243,13 @@ impl App {
             self.quit = true;
             return;
         }
+        self.notice = None;
+        if let Some(removal) = self.confirm.take() {
+            if key.code == KeyCode::Char('y') {
+                self.remove(&removal);
+            }
+            return;
+        }
         if self.input.is_some() {
             self.on_key_input(key.code);
             return;
@@ -245,7 +263,7 @@ impl App {
     /// The wheel moves the selection; a click selects a line, and a click on
     /// the selected line does what Enter does (open a folder, scan a disk).
     pub fn on_mouse(&mut self, m: MouseEvent) {
-        if self.input.is_some() {
+        if self.input.is_some() || self.confirm.is_some() {
             return;
         }
         let key = |code: KeyCode| KeyEvent::from(code);
@@ -328,6 +346,10 @@ impl App {
                 self.reveal(&path, is_dir);
             }
             KeyCode::Char(key @ ('f' | 'e')) => view.switch_panel(key),
+            KeyCode::Char('d') => {
+                let path = tree::path_of(&view.root, &view.rows, view.selected);
+                self.ask_removal(path);
+            }
             code => view.on_key(code),
         }
     }
@@ -348,6 +370,11 @@ impl App {
                     self.reveal(&path, false);
                 }
             }
+            KeyCode::Char('d') if matches!(view.panel.as_deref(), Some(Panel::Files(_))) => {
+                if let Some(path) = view.panel_selection() {
+                    self.ask_removal(path);
+                }
+            }
             code => view.panel_key(code),
         }
     }
@@ -357,6 +384,63 @@ impl App {
             let path = view.path.clone();
             self.start_scan(&path);
         }
+    }
+
+    /// `d`: asks before moving `path` to the trash, or says why it will not.
+    fn ask_removal(&mut self, path: PathBuf) {
+        let Screen::Tree(view) = &self.screen else {
+            return;
+        };
+        let refusal = if view.is_scanning() {
+            Some("wait for the scan to finish before deleting".to_owned())
+        } else if path == view.path {
+            Some(format!(
+                "{}: the scanned folder itself, go up a level to delete it",
+                path.display()
+            ))
+        } else if platform::is_protected(&path) {
+            Some(format!(
+                "{}: a system folder, spacejunk does not delete it",
+                path.display()
+            ))
+        } else {
+            None
+        };
+        if refusal.is_some() {
+            self.message = refusal;
+            return;
+        }
+        if let Some(chain) = tree::find(&view.root, &path) {
+            let size = chain.last().map_or(0, |n| n.size());
+            self.confirm = Some(Removal { path, size });
+        }
+    }
+
+    fn remove(&mut self, removal: &Removal) {
+        let path = &removal.path;
+        if let Err(e) = (self.trash)(path) {
+            self.message = Some(format!("cannot delete {}: {e}", path.display()));
+            return;
+        }
+        let Screen::Tree(view) = &mut self.screen else {
+            return;
+        };
+        if let Some(chain) = tree::find(&view.root, path)
+            && let Some((node, ancestors)) = chain.split_last()
+        {
+            node.remove(ancestors);
+        }
+        view.refresh();
+        if let Some(Panel::Files(files)) = view.panel.as_deref_mut() {
+            files.rebuild(&view.root);
+        }
+        self.message = None;
+        self.notice = Some(format!(
+            "Moved {} ({}) to the {}: empty it to free the space",
+            path.display(),
+            crate::ui::human(removal.size),
+            platform::TRASH_NAME
+        ));
     }
 
     fn reveal(&mut self, path: &Path, is_dir: bool) {
@@ -616,6 +700,8 @@ impl App {
             disk_selected: 0,
             input: None,
             message: None,
+            notice: None,
+            confirm: None,
             update: None,
             quit: false,
             list_area: Rect::default(),
@@ -627,6 +713,7 @@ impl App {
                     .unwrap(),
             ),
             update_rx: std::sync::mpsc::channel().1,
+            trash: platform::trash,
         }
     }
 }
@@ -672,7 +759,7 @@ mod tests {
 
     #[test]
     fn tilde_expands_to_home_only_as_a_prefix() {
-        let home = home_dir().unwrap().to_string_lossy().into_owned();
+        let home = platform::home_dir().unwrap().to_string_lossy().into_owned();
         assert_eq!(expand_tilde("~"), PathBuf::from(&home));
         assert_eq!(expand_tilde("~/x"), PathBuf::from(format!("{home}/x")));
         assert_eq!(expand_tilde("~user"), PathBuf::from("~user"));
@@ -806,6 +893,84 @@ mod tests {
             panic!("files view not open")
         };
         assert_eq!(files.nav.selected, 1, "clamped to the last of 2 files");
+    }
+
+    fn trash_app() -> App {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1); // /r, a/, small
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.trash = |path| {
+            TRASHED.with(|t| t.borrow_mut().push(path.to_path_buf()));
+            Ok(())
+        };
+        app
+    }
+
+    thread_local! {
+        static TRASHED: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn tree(app: &App) -> &TreeView {
+        let Screen::Tree(view) = &app.screen else {
+            panic!("not on the tree")
+        };
+        view
+    }
+
+    #[test]
+    fn d_asks_first_and_y_moves_to_the_trash() {
+        let mut app = trash_app();
+        app.on_key(KeyCode::Down.into()); // a/
+        app.on_key(KeyCode::Char('d').into());
+        let a = PathBuf::from("/r").join("a");
+        assert_eq!(app.confirm.as_ref().map(|c| &c.path), Some(&a));
+        app.on_key(KeyCode::Char('n').into());
+        assert!(app.confirm.is_none(), "any other key cancels");
+        assert!(TRASHED.with(|t| t.borrow().is_empty()));
+
+        app.on_key(KeyCode::Char('d').into());
+        app.on_key(KeyCode::Char('y').into());
+        assert_eq!(TRASHED.with(|t| t.borrow().clone()), [a]);
+        let view = tree(&app);
+        assert_eq!(view.root.size(), 1, "a's 50 bytes left the total");
+        assert_eq!(view.rows.len(), 2, "/r and small");
+        assert!(app.notice.as_deref().unwrap().contains("(50 B)"));
+    }
+
+    #[test]
+    fn d_refuses_the_scanned_folder_itself() {
+        let mut app = trash_app();
+        app.on_key(KeyCode::Char('d').into());
+        assert!(app.confirm.is_none());
+        assert!(app.message.is_some());
+    }
+
+    #[test]
+    fn d_in_the_largest_files_list_trashes_that_file() {
+        let mut app = trash_app();
+        app.on_key(KeyCode::Char('f').into());
+        app.on_key(KeyCode::Char('d').into());
+        app.on_key(KeyCode::Char('y').into());
+        let big = PathBuf::from("/r").join("a").join("big");
+        assert_eq!(TRASHED.with(|t| t.borrow().clone()), [big]);
+        let Some(Panel::Files(files)) = tree(&app).panel.as_deref() else {
+            panic!("files view closed")
+        };
+        assert_eq!(file_names(files), ["small"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn d_refuses_system_folders() {
+        let root = Node::fake_dir(
+            "/",
+            vec![Node::fake_dir("usr", vec![Node::fake_file("x", 9)])],
+        );
+        let view = TreeView::finished(root, 1, 2, 0.1);
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.on_key(KeyCode::Down.into());
+        app.on_key(KeyCode::Char('d').into());
+        assert!(app.confirm.is_none());
+        assert!(app.message.as_deref().unwrap().contains("system"));
     }
 
     #[test]

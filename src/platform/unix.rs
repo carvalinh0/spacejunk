@@ -3,7 +3,7 @@
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{Entry, Root};
@@ -101,6 +101,29 @@ pub const ELEVATE_HINT: &str =
     "Run with sudo, or give your terminal Full Disk Access in System Settings";
 #[cfg(not(target_os = "macos"))]
 pub const ELEVATE_HINT: &str = "Run spacejunk with sudo to read them";
+
+pub const TRASH_NAME: &str = "Trash";
+
+/// The operating system's own folders (`/usr/local` included: it is still
+/// what other programs run from).
+pub fn system_folders() -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let folders = [
+        "/System",
+        "/bin",
+        "/sbin",
+        "/usr",
+        "/dev",
+        "/etc",
+        "/private/etc",
+    ];
+    #[cfg(not(target_os = "macos"))]
+    let folders = [
+        "/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/libx32", "/proc", "/run",
+        "/sbin", "/sys", "/usr", "/var/lib",
+    ];
+    folders.iter().map(PathBuf::from).collect()
+}
 
 #[cfg(test)]
 mod tests {

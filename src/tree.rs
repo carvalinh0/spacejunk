@@ -7,7 +7,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -64,6 +64,7 @@ impl Builder {
         let mut order: Vec<(u64, u32)> = kids
             .iter()
             .enumerate()
+            .filter(|(_, c)| !c.is_removed())
             .map(|(i, c)| (c.size(), i as u32))
             .collect();
         order.sort_unstable_by_key(|&(size, i)| (Reverse(size), i));
@@ -116,7 +117,7 @@ fn collect_files(
     n: usize,
     heap: &mut BinaryHeap<Reverse<(u64, PathBuf)>>,
 ) {
-    for child in dir.children() {
+    for child in dir.children().iter().filter(|c| !c.is_removed()) {
         path.push(&*child.name);
         let size = child.size();
         if child.is_dir {
@@ -129,6 +130,22 @@ fn collect_files(
         }
         path.pop();
     }
+}
+
+/// The nodes from `root` down to the one at `path`, if it is in the tree.
+pub fn find<'a>(root: &'a Node, path: &Path) -> Option<Vec<&'a Node>> {
+    let rel = path.strip_prefix(&*root.name).ok()?;
+    let mut chain = vec![root];
+    for part in rel.components() {
+        let name = part.as_os_str().to_str()?;
+        let parent = chain.last()?;
+        let child = parent
+            .children()
+            .iter()
+            .find(|c| &*c.name == name && !c.is_removed())?;
+        chain.push(child);
+    }
+    Some(chain)
 }
 
 #[cfg(test)]
@@ -161,6 +178,39 @@ mod tests {
         }
         assert_eq!(largest_files(&root, 0), Vec::<(u64, PathBuf)>::new());
         assert_eq!(largest_files(&root, 10).len(), 4);
+    }
+
+    #[test]
+    fn a_removed_entry_leaves_the_rows_the_files_and_its_ancestors_sizes() {
+        let root = Node::fake_dir(
+            "/r",
+            vec![
+                Node::fake_dir(
+                    "a",
+                    vec![Node::fake_file("big", 50), Node::fake_file("x", 5)],
+                ),
+                Node::fake_file("small", 1),
+            ],
+        );
+        let path = PathBuf::from("/r").join("a").join("big");
+        let chain = find(&root, &path).expect("found");
+        let names: Vec<&str> = chain.iter().map(|n| &*n.name).collect();
+        assert_eq!(names, ["/r", "a", "big"]);
+        let (big, ancestors) = chain.split_last().unwrap();
+        big.remove(ancestors);
+
+        assert_eq!(root.size(), 6);
+        assert_eq!(ancestors[1].size(), 5);
+        assert!(find(&root, &path).is_none());
+        root.expanded.store(true, Relaxed);
+        root.children()[0].expanded.store(true, Relaxed);
+        let (rows, _) = build(&root, ptr::null());
+        let shown: Vec<String> = (0..rows.len())
+            .map(|i| node(&root, &rows, i).name.to_string())
+            .collect();
+        assert_eq!(shown, ["/r", "a", "x", "small"]);
+        let files: Vec<u64> = largest_files(&root, 10).iter().map(|f| f.0).collect();
+        assert_eq!(files, [5, 1]);
     }
 
     #[test]

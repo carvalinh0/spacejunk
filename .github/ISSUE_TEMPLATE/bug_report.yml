@@ -5,8 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting! spacejunk only reads your disk, so please also tell us if anything
-        looks like it was changed: that would be a serious bug.
+        Thanks for reporting! spacejunk only reads your disk, unless you confirm a `d` (move to the
+        trash), so please also tell us if anything else looks like it was changed: that would be a
+        serious bug.
 
   - type: textarea
     id: what-happened
