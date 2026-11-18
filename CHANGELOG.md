@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0](https://github.com/carvalinh0/spacejunk/compare/v1.1.0...v1.2.0) - 2026-11-18
+
+### Added
+
+- search files and folders by name (/) ([#28](https://github.com/carvalinh0/spacejunk/pull/28))
+- junk finder (c) ([#26](https://github.com/carvalinh0/spacejunk/pull/26))
+
 ## [1.1.0](https://github.com/carvalinh0/spacejunk/compare/v1.0.1...v1.1.0) - 2026-11-18
 
 ### Added
