@@ -1,6 +1,6 @@
 [package]
 name = "spacejunk"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Fast TUI disk usage analyzer: shows a tree of folders from heaviest to lightest"
