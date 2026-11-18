@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="spacejunk logo">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262c3d"/>
+      <stop offset="1" stop-color="#141824"/>
+    </linearGradient>
+  </defs>
+  <!-- terminal tile -->
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#tile)"/>
+  <rect x="17" y="17" width="478" height="478" rx="103" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
+
+  <!-- tree: root node, trunk and branches -->
+  <g fill="none" stroke="#6b7590" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 132 V 336 Q112 360 136 360 H156"/>
+    <path d="M112 200 H156"/>
+    <path d="M112 280 H156"/>
+  </g>
+  <rect x="88" y="92" width="48" height="48" rx="12" fill="#22d3ee"/>
+
+  <!-- size bars, heaviest to lightest -->
+  <rect x="176" y="176" width="256" height="48" rx="14" fill="#ef4444"/>
+  <rect x="176" y="256" width="160" height="48" rx="14" fill="#f59e0b"/>
+  <rect x="176" y="336" width="80" height="48" rx="14" fill="#22c55e"/>
+
+  <!-- cursor -->
+  <rect x="176" y="96" width="28" height="40" rx="4" fill="#e5e9f0" opacity="0.85"/>
+</svg>
