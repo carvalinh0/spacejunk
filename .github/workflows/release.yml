@@ -1,0 +1,127 @@
+# Automatic versioning + publishing with release-plz.
+#
+# On every push to main:
+#   1. CI runs (fmt, clippy, test) on Linux, macOS and Windows.
+#   2. `release-pr` opens/updates a "chore: release" PR that bumps the version
+#      in Cargo.toml/Cargo.lock and updates CHANGELOG.md, based on the
+#      Conventional Commits since the last release (fix: -> patch,
+#      feat: -> minor, feat!: / BREAKING CHANGE -> major).
+#   3. When that PR is merged, `release` sees the new version, creates the
+#      git tag + GitHub Release and runs `cargo publish`.
+#   4. `binaries` builds every target and attaches
+#      spacejunk-<tag>-<target>.tar.gz|.zip (+ .sha256) to that release.
+#      scripts/install.sh and scripts/install.ps1 download these names:
+#      never rename them.
+#
+# Required secret: CARGO_REGISTRY_TOKEN (crates.io API token with scopes publish-new
+# and publish-update: the first release creates the crate).
+# Required setting: Settings > Actions > General > "Allow GitHub Actions to
+# create and approve pull requests".
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish to crates.io
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.release-plz.outputs.releases_created }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - id: tag
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: echo "tag=$(echo "$RELEASES" | jq -r '.[0].tag')" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: Binary ${{ matrix.target }}
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      TARGET: ${{ matrix.target }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package and upload (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="spacejunk-$TAG-$TARGET.tar.gz"
+          tar -C "target/$TARGET/release" -czf "$name" spacejunk
+          shasum -a 256 "$name" > "$name.sha256"
+          gh release upload "$TAG" "$name" "$name.sha256" --clobber
+      - name: Package and upload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "spacejunk-$env:TAG-$env:TARGET.zip"
+          Compress-Archive -Path "target/$env:TARGET/release/spacejunk.exe" -DestinationPath $name
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$name.sha256" -Value "$hash  $name" -Encoding ascii -NoNewline
+          gh release upload $env:TAG $name "$name.sha256" --clobber
+
+  release-pr:
+    name: Open release PR (version bump)
+    needs: ci
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
