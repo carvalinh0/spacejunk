@@ -14,6 +14,10 @@
 #      scripts/install.sh and scripts/install.ps1 download these names:
 #      never rename them.
 #   5. `publish-release` publishes the draft once every binary is attached.
+#   6. `store-package` bundles the two Windows binaries into
+#      spacejunk-<tag>.msixbundle, kept as a workflow artifact (not a release
+#      asset: it is unsigned until the Store re-signs it). Upload it by hand in
+#      Partner Center as a new submission.
 #
 # Why a draft: the repository uses immutable releases, which refuse assets
 # once a release is published (v0.1.0 shipped without binaries because of
@@ -133,6 +137,28 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  store-package:
+    name: Microsoft Store package
+    needs: [release, publish-release]
+    runs-on: windows-latest
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Bundle the released Windows binaries
+        shell: pwsh
+        run: |
+          gh release download $env:TAG --pattern '*-pc-windows-msvc.zip' --dir dl
+          Expand-Archive "dl/spacejunk-$env:TAG-x86_64-pc-windows-msvc.zip" x64
+          Expand-Archive "dl/spacejunk-$env:TAG-aarch64-pc-windows-msvc.zip" arm64
+          ./packaging/msix/pack.ps1 -Exe @{ x64 = 'x64/spacejunk.exe'; arm64 = 'arm64/spacejunk.exe' } -Out "spacejunk-$env:TAG.msixbundle"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: spacejunk-${{ needs.release.outputs.tag }}-msixbundle
+          path: spacejunk-*.msixbundle
+          if-no-files-found: error
 
   release-pr:
     name: Open release PR (version bump)
