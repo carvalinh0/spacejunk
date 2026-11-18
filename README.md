@@ -88,7 +88,17 @@ check: the Store updates it.
 spacejunk              # pick a disk (or type a path) on the start screen
 spacejunk ~/projects   # scan a path directly
 spacejunk --scan / 20  # no TUI: print the 20 largest entries
+spacejunk --scan / 20 --json   # the same as one line of JSON, for scripts
 ```
+
+`--json` prints sizes in bytes:
+
+```json
+{"path":"/","size":77632053248,"files":776973,"dirs":138190,"errors":32,"seconds":1.721,
+ "entries":[{"name":"home","size":72958562304,"dir":true}, ...]}
+```
+
+(one line in the real output). Names that are not valid UTF-8 show `�` in place of the invalid bytes.
 
 The tree shows up immediately and re-sorts itself as sizes grow; folders not read yet show a
 spinner. You can browse and open folders while the scan runs. The largest files list (`f`) is
