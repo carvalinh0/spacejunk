@@ -24,11 +24,18 @@ $makeappx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\m
     Sort-Object { [version]$_.Directory.Parent.Name } |
     Select-Object -Last 1
 if (-not $makeappx) { throw 'makeappx.exe not found: install the Windows SDK' }
+$makepri = Join-Path $makeappx.Directory 'makepri.exe'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) 'spacejunk-msix'
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 $packages = New-Item -ItemType Directory (Join-Path $work 'packages')
 $manifest = Get-Content (Join-Path $PSScriptRoot 'AppxManifest.xml') -Raw
+# Images/ holds each logo per scale (scale-100..400) and per taskbar size
+# (targetsize-16..256). Windows picks the right one through resources.pri;
+# without it, only an unqualified file can be used, blurry when scaled up.
+$priconfig = Join-Path $work 'priconfig.xml'
+& $makepri createconfig /cf $priconfig /dq en-US /pv 10.0.0 /o
+if ($LASTEXITCODE) { throw 'makepri createconfig failed' }
 
 foreach ($arch in $Exe.Keys) {
     $layout = New-Item -ItemType Directory (Join-Path $work $arch)
@@ -36,6 +43,8 @@ foreach ($arch in $Exe.Keys) {
     Copy-Item (Join-Path $PSScriptRoot 'Images') $layout -Recurse
     $manifest.Replace('{VERSION}', $version).Replace('{ARCH}', $arch) |
         Set-Content (Join-Path $layout 'AppxManifest.xml') -Encoding utf8
+    & $makepri new /pr $layout /cf $priconfig /mn (Join-Path $layout 'AppxManifest.xml') /of (Join-Path $layout 'resources.pri') /o
+    if ($LASTEXITCODE) { throw "makepri failed for $arch" }
     & $makeappx pack /o /h SHA256 /d $layout /p (Join-Path $packages "spacejunk_$arch.msix")
     if ($LASTEXITCODE) { throw "makeappx pack failed for $arch" }
 }
