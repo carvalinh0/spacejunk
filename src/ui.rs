@@ -70,9 +70,25 @@ fn spinner() -> char {
     SPINNER[(ms / 100) as usize % SPINNER.len()]
 }
 
-fn footer(keys: &[(&str, &str)]) -> Line<'static> {
+/// Key hints in order of importance. Hints that do not fit the width are
+/// dropped, except the last one (quit), which always shows.
+fn footer(keys: &[(&str, &str)], width: u16) -> Line<'static> {
+    let hint_width = |(k, d): &(&str, &str)| k.chars().count() + d.chars().count() + 5;
+    let Some((last, rest)) = keys.split_last() else {
+        return Line::default();
+    };
+    let mut room = usize::from(width).saturating_sub(hint_width(last));
+    let mut shown: Vec<&(&str, &str)> = rest
+        .iter()
+        .take_while(|hint| {
+            let fits = hint_width(hint) <= room;
+            room = room.saturating_sub(hint_width(hint));
+            fits
+        })
+        .collect();
+    shown.push(last);
     let mut spans = Vec::new();
-    for (k, d) in keys {
+    for (k, d) in shown {
         spans.push(Span::styled(format!(" {k} "), Style::new().reversed()));
         spans.push(Span::raw(format!(" {d}  ")));
     }
@@ -93,7 +109,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Screen::Disks => draw_disks(f, body, app.disk_selected, &app.disks),
         Screen::Tree(view) => draw_tree(f, body, view),
     }
-    f.render_widget(footer_for(app), foot);
+    f.render_widget(footer_for(app, foot.width), foot);
 }
 
 fn title_line(app: &App) -> Line<'static> {
@@ -113,7 +129,7 @@ fn update_notice(latest: &str) -> Span<'static> {
     ))
 }
 
-fn footer_for(app: &App) -> Line<'static> {
+fn footer_for(app: &App, width: u16) -> Line<'static> {
     if let Some(text) = &app.input {
         return Line::from(vec![
             Span::styled(" Path ", Style::new().reversed()),
@@ -122,23 +138,32 @@ fn footer_for(app: &App) -> Line<'static> {
             Span::raw("   Enter scan · Esc cancel").dim(),
         ]);
     }
-    match &app.screen {
-        Screen::Disks => footer(&[
+    let keys: &[(&str, &str)] = match &app.screen {
+        Screen::Disks => &[
             ("↑↓", "move"),
             ("Enter", "scan"),
             ("p", "type a path"),
             ("r", "refresh"),
             ("q", "quit"),
-        ]),
-        Screen::Tree(_) => footer(&[
+        ],
+        Screen::Tree(view) if view.files.is_some() => &[
+            ("↑↓", "move"),
+            ("o", "file manager"),
+            ("f/Esc", "back to the tree"),
+            ("r", "rescan"),
+            ("q", "quit"),
+        ],
+        Screen::Tree(_) => &[
             ("↑↓", "move"),
             ("→/←", "open/close"),
+            ("f", "largest files"),
             ("o", "file manager"),
             ("r", "rescan"),
             ("Esc", "disks"),
             ("q", "quit"),
-        ]),
-    }
+        ],
+    };
+    footer(keys, width)
 }
 
 fn draw_disks(f: &mut Frame, area: Rect, selected: usize, disks: &[crate::app::DiskEntry]) {
@@ -213,33 +238,78 @@ fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) {
     ])
     .areas(area);
     f.render_widget(summary(view), info);
+    if view.files.is_some() {
+        draw_files(f, list, status, view);
+        return;
+    }
 
     // Only build rows for the lines on screen: the row list can be huge.
     let height = list.height.saturating_sub(2) as usize; // borders
     view.page = height;
-    if view.selected < view.offset {
-        view.offset = view.selected;
-    } else if height > 0 && view.selected >= view.offset + height {
-        view.offset = view.selected + 1 - height;
-    }
+    scroll(&mut view.offset, view.selected, height);
     let end = (view.offset + height).min(view.rows.len());
     let rows = (view.offset..end).map(|i| tree_row(view, i));
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(11),
-            Constraint::Length(6),
-            Constraint::Length(12),
-            Constraint::Fill(1),
-        ],
-    )
-    .row_highlight_style(SELECTED)
-    .block(Block::bordered());
+    let table = Table::new(rows, columns())
+        .row_highlight_style(SELECTED)
+        .block(Block::bordered());
     let mut state = TableState::default().with_selected(Some(view.selected - view.offset));
     f.render_stateful_widget(table, list, &mut state);
 
     let path = tree::path_of(&view.root, &view.rows, view.selected);
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
+}
+
+/// Keeps the selected line inside the `height` visible lines.
+fn scroll(offset: &mut usize, selected: usize, height: usize) {
+    if selected < *offset {
+        *offset = selected;
+    } else if height > 0 && selected >= *offset + height {
+        *offset = selected + 1 - height;
+    }
+}
+
+fn draw_files(f: &mut Frame, list: Rect, status: Rect, view: &mut TreeView) {
+    let total = view.root.size();
+    let base = view.path.clone();
+    let Some(files) = &mut view.files else {
+        return;
+    };
+    let block = Block::bordered().title(format!(" Largest files ({}) ", files.files.len()));
+    if files.files.is_empty() {
+        f.render_widget(Paragraph::new(" No files yet.").block(block), list);
+        return;
+    }
+    let height = list.height.saturating_sub(2) as usize;
+    files.page = height;
+    scroll(&mut files.offset, files.selected, height);
+    let end = (files.offset + height).min(files.files.len());
+    let rows = files.files[files.offset..end].iter().map(|(size, path)| {
+        let frac = share(*size, total);
+        let shown = path.strip_prefix(&base).unwrap_or(path);
+        Row::new(vec![
+            Cell::from(format!("{:>10}", human(*size))).fg(heat(frac)),
+            Cell::from(format!("{:>5.1}%", frac * 100.0)),
+            Cell::from(bar(frac, 12)).fg(heat(frac)),
+            Cell::from(shown.display().to_string()),
+        ])
+    });
+    let table = Table::new(rows, columns())
+        .row_highlight_style(SELECTED)
+        .block(block);
+    let mut state = TableState::default().with_selected(Some(files.selected - files.offset));
+    f.render_stateful_widget(table, list, &mut state);
+    let path = &files.files[files.selected].1;
+    f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
+}
+
+/// Size, share, bar, name: the tree and the largest files list line up.
+fn columns() -> [Constraint; 4] {
+    [
+        Constraint::Length(11),
+        Constraint::Length(6),
+        Constraint::Length(12),
+        Constraint::Fill(1),
+    ]
 }
 
 /// Share of the parent's size (the root is 100%).
@@ -398,8 +468,39 @@ mod tests {
 │   4.0 KiB    0.0%                  notes.txt                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
  /data
- ↑↓  move   →/←  open/close   o  file manager   r  rescan   Esc  disks   q  quit";
+ ↑↓  move   →/←  open/close   f  largest files   o  file manager   q  quit";
         assert_eq!(lines(&buf), expected(screen));
+    }
+
+    #[test]
+    fn files_screen() {
+        let mut app = tree_app();
+        app.on_key(ratatui::crossterm::event::KeyCode::Char('f').into());
+        let buf = render(&mut app, 80, 10);
+        let sep = std::path::MAIN_SEPARATOR;
+        let screen = format!(
+            r"
+ spacejunk
+ /data  8.5 GiB  ·  4 files  ·  3 dirs  ·  0 errors  ·  0.25s
+┌ Largest files (4) ───────────────────────────────────────────────────────────┐
+│   6.0 GiB   70.6% ████████▌    videos{sep}movie.mkv                              │
+│   2.0 GiB   23.5% ██▉          photos{sep}a.jpg                                  │
+│ 512.0 MiB    5.9% ▊            videos{sep}clip.mp4                               │
+│   4.0 KiB    0.0%              notes.txt                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+ /data{sep}videos{sep}movie.mkv
+ ↑↓  move   o  file manager   f/Esc  back to the tree   r  rescan   q  quit"
+        );
+        assert_eq!(lines(&buf), expected(&screen));
+    }
+
+    #[test]
+    fn footer_drops_hints_that_do_not_fit_but_keeps_quit() {
+        let keys = [("a", "first"), ("b", "second"), ("q", "quit")];
+        let text = |w| footer(&keys, w).to_string();
+        assert_eq!(text(80), " a  first   b  second   q  quit  ");
+        assert_eq!(text(28), " a  first   q  quit  ");
+        assert_eq!(text(5), " q  quit  ");
     }
 
     /// The bug `SELECTED` fixed: on the selected line the bar must keep its

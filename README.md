@@ -91,7 +91,9 @@ spacejunk --scan / 20  # no TUI: print the 20 largest entries
 ```
 
 The tree shows up immediately and re-sorts itself as sizes grow; folders not read yet show a
-spinner. You can browse and open folders while the scan runs.
+spinner. You can browse and open folders while the scan runs. The largest files list (`f`) is
+live too. Key hints that do not fit a narrow terminal are left out of the bottom line; the table
+below has them all.
 
 | Key | Action |
 |---|---|
@@ -101,6 +103,7 @@ spinner. You can browse and open folders while the scan runs.
 | `←` / `h` | close folder (or jump to the parent) |
 | `Enter` / `Space` | open/close |
 | `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
+| `f` | largest files: the 1000 biggest files of the scan in one list (`o` shows one, `f`/`Esc` back to the tree) |
 | `PgUp` `PgDn` `g` `G` | scroll / top / bottom |
 | `r` | rescan |
 | `Esc` | back to the disk list (cancels a running scan) |

@@ -6,6 +6,7 @@
 //! are visited.
 
 use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::Ordering::Relaxed;
@@ -97,10 +98,70 @@ pub fn path_of(root: &Node, rows: &[Row], mut i: usize) -> PathBuf {
     p
 }
 
+/// The `n` largest files below `root` with their paths, largest first.
+/// Walks the whole tree: call it on demand, not on every frame.
+pub fn largest_files(root: &Node, n: usize) -> Vec<(u64, PathBuf)> {
+    let mut heap = BinaryHeap::with_capacity(n + 1);
+    collect_files(root, &mut PathBuf::from(&*root.name), n, &mut heap);
+    let mut files: Vec<_> = heap.into_iter().map(|Reverse(f)| f).collect();
+    files.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    files
+}
+
+/// A min-heap of the `n` largest files so far: millions of files go by, and
+/// only one larger than the smallest kept builds its path.
+fn collect_files(
+    dir: &Node,
+    path: &mut PathBuf,
+    n: usize,
+    heap: &mut BinaryHeap<Reverse<(u64, PathBuf)>>,
+) {
+    for child in dir.children() {
+        path.push(&*child.name);
+        let size = child.size();
+        if child.is_dir {
+            collect_files(child, path, n, heap);
+        } else if heap.len() < n {
+            heap.push(Reverse((size, path.clone())));
+        } else if heap.peek().is_some_and(|Reverse((min, _))| size > *min) {
+            heap.pop();
+            heap.push(Reverse((size, path.clone())));
+        }
+        path.pop();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn largest_files_across_folders_largest_first() {
+        let root = Node::fake_dir(
+            "/r",
+            vec![
+                Node::fake_file("small", 1),
+                Node::fake_dir(
+                    "a",
+                    vec![
+                        Node::fake_file("big", 50),
+                        Node::fake_dir("b", vec![Node::fake_file("mid", 20)]),
+                    ],
+                ),
+                Node::fake_file("top", 99),
+                Node::fake_dir("empty", Vec::new()),
+            ],
+        );
+        let files = largest_files(&root, 3);
+        let expected = [(99, "/r/top"), (50, "/r/a/big"), (20, "/r/a/b/mid")];
+        assert_eq!(files.len(), expected.len());
+        for ((size, path), (want_size, want_path)) in files.iter().zip(expected) {
+            assert_eq!((*size, path), (want_size, &PathBuf::from(want_path)));
+        }
+        assert_eq!(largest_files(&root, 0), Vec::<(u64, PathBuf)>::new());
+        assert_eq!(largest_files(&root, 10).len(), 4);
+    }
 
     #[test]
     fn rows_sorted_largest_first_and_follow_expansion() {

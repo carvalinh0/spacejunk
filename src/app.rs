@@ -35,9 +35,26 @@ pub struct TreeView {
     pub offset: usize,
     pub page: usize,
     pub progress: Arc<Progress>,
+    /// The largest files list (`f`), shown instead of the tree while open.
+    pub files: Option<Box<FilesView>>,
     started: Instant,
     finished: Option<Duration>,
     job: Option<JoinHandle<()>>,
+}
+
+/// How many files the largest files list keeps.
+const LARGEST_FILES: usize = 1000;
+/// The list walks the whole tree, so a running scan refreshes it this often,
+/// not every frame.
+const FILES_REFRESH: Duration = Duration::from_secs(1);
+
+pub struct FilesView {
+    /// Size and full path, largest first.
+    pub files: Vec<(u64, PathBuf)>,
+    pub selected: usize,
+    pub offset: usize,
+    pub page: usize,
+    built: Instant,
 }
 
 pub enum Screen {
@@ -226,6 +243,10 @@ impl App {
         let Screen::Tree(view) = &mut self.screen else {
             return;
         };
+        if view.files.is_some() {
+            self.on_key_files(code);
+            return;
+        }
         match code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc | KeyCode::Char('b') => {
@@ -233,18 +254,49 @@ impl App {
                 self.disks = list_disks();
                 self.screen = Screen::Disks;
             }
-            KeyCode::Char('r') => {
-                let path = view.path.clone();
-                self.start_scan(&path);
-            }
+            KeyCode::Char('r') => self.rescan(),
             KeyCode::Char('o') => {
                 let path = tree::path_of(&view.root, &view.rows, view.selected);
-                self.message = platform::reveal(&path, view.selected_node().is_dir)
-                    .err()
-                    .map(|e| format!("cannot open the file manager: {e}"));
+                let is_dir = view.selected_node().is_dir;
+                self.reveal(&path, is_dir);
             }
+            KeyCode::Char('f') => view.files = Some(Box::new(FilesView::new(&view.root))),
             code => view.on_key(code),
         }
+    }
+
+    fn on_key_files(&mut self, code: KeyCode) {
+        let Screen::Tree(view) = &mut self.screen else {
+            return;
+        };
+        let Some(files) = &mut view.files else {
+            return;
+        };
+        match code {
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Esc | KeyCode::Char('f' | 'b' | 'h') | KeyCode::Left => view.files = None,
+            KeyCode::Char('r') => self.rescan(),
+            KeyCode::Char('o') => {
+                if let Some((_, path)) = files.files.get(files.selected) {
+                    let path = path.clone();
+                    self.reveal(&path, false);
+                }
+            }
+            code => files.on_key(code),
+        }
+    }
+
+    fn rescan(&mut self) {
+        if let Screen::Tree(view) = &self.screen {
+            let path = view.path.clone();
+            self.start_scan(&path);
+        }
+    }
+
+    fn reveal(&mut self, path: &Path, is_dir: bool) {
+        self.message = platform::reveal(path, is_dir)
+            .err()
+            .map(|e| format!("cannot open the file manager: {e}"));
     }
 
     fn on_key_disks(&mut self, code: KeyCode) {
@@ -298,6 +350,7 @@ impl TreeView {
             offset: 0,
             page: 10,
             progress,
+            files: None,
             started: Instant::now(),
             finished: None,
             job: Some(job),
@@ -319,11 +372,17 @@ impl TreeView {
         let Some(job) = &self.job else {
             return;
         };
-        if job.is_finished() {
+        let done = job.is_finished();
+        if done {
             self.job = None;
             self.finished = Some(self.started.elapsed());
         }
         self.refresh();
+        if let Some(files) = &mut self.files
+            && (done || files.built.elapsed() >= FILES_REFRESH)
+        {
+            files.rebuild(&self.root);
+        }
     }
 
     pub fn selected_node(&self) -> &Node {
@@ -399,6 +458,44 @@ impl TreeView {
     }
 }
 
+impl FilesView {
+    fn new(root: &Node) -> Self {
+        FilesView {
+            files: tree::largest_files(root, LARGEST_FILES),
+            selected: 0,
+            offset: 0,
+            page: 10,
+            built: Instant::now(),
+        }
+    }
+
+    /// Re-reads the sizes; the selection stays on its file if still listed.
+    fn rebuild(&mut self, root: &Node) {
+        let keep = self.files.get(self.selected).map(|(_, p)| p.clone());
+        self.files = tree::largest_files(root, LARGEST_FILES);
+        self.built = Instant::now();
+        let found = keep.and_then(|k| self.files.iter().position(|(_, p)| *p == k));
+        self.selected = found
+            .unwrap_or(self.selected)
+            .min(self.files.len().saturating_sub(1));
+    }
+
+    fn on_key(&mut self, code: KeyCode) {
+        let last = self.files.len().saturating_sub(1);
+        let page = self.page.max(1);
+        self.selected = match code {
+            KeyCode::Up | KeyCode::Char('k') => self.selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => self.selected + 1,
+            KeyCode::PageUp => self.selected.saturating_sub(page),
+            KeyCode::PageDown => self.selected + page,
+            KeyCode::Home | KeyCode::Char('g') => 0,
+            KeyCode::End | KeyCode::Char('G') => last,
+            _ => self.selected,
+        }
+        .min(last);
+    }
+}
+
 #[cfg(test)]
 impl App {
     /// An app showing `screen`, without listing the real disks or asking
@@ -439,6 +536,7 @@ impl TreeView {
             offset: 0,
             page: 10,
             progress: Arc::new(progress),
+            files: None,
             started: Instant::now(),
             finished: Some(Duration::from_secs_f64(secs)),
             job: None,
@@ -486,6 +584,49 @@ mod tests {
 
     fn selected_name(v: &TreeView) -> &str {
         &v.selected_node().name
+    }
+
+    fn files_root(small: u64) -> Node {
+        Node::fake_dir(
+            "/r",
+            vec![
+                Node::fake_dir("a", vec![Node::fake_file("big", 50)]),
+                Node::fake_file("small", small),
+            ],
+        )
+    }
+
+    fn file_names(files: &FilesView) -> Vec<String> {
+        let names = files.files.iter().map(|(_, p)| p.file_name().unwrap());
+        names.map(|n| n.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn f_lists_the_largest_files_and_esc_goes_back_to_the_tree() {
+        let view = TreeView::finished(files_root(1), 2, 2, 0.1);
+        let mut app = App::for_test(Screen::Tree(view), Vec::new());
+        app.on_key(KeyCode::Char('f').into());
+        app.on_key(KeyCode::Down.into());
+        let Screen::Tree(view) = &app.screen else {
+            unreachable!()
+        };
+        let files = view.files.as_ref().expect("files view open");
+        assert_eq!(file_names(files), ["big", "small"]);
+        assert_eq!(files.selected, 1);
+        app.on_key(KeyCode::Esc.into());
+        let Screen::Tree(view) = &app.screen else {
+            panic!("Esc left the scan instead of the files view")
+        };
+        assert!(view.files.is_none());
+    }
+
+    #[test]
+    fn files_selection_follows_its_file_when_the_list_reorders() {
+        let mut files = FilesView::new(&files_root(1));
+        files.selected = 1; // small
+        files.rebuild(&files_root(100)); // small is now the largest
+        assert_eq!(file_names(&files), ["small", "big"]);
+        assert_eq!(files.selected, 0);
     }
 
     #[test]
