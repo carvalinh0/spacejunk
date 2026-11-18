@@ -5,7 +5,7 @@
 Find out what is eating your disk. A Rust TUI that scans a disk and shows a tree of folders
 from **heaviest to lightest**, updated **live** while the scan runs.
 
-<img width="1920" height="1080" alt="spacejunk-store-1" src="https://github.com/user-attachments/assets/1711ed24-ebe8-4d47-b1bf-a3bcefe69f1b" />
+<img width="1920" height="1080" alt="spacejunk-1 2-3-live-scan" src="https://github.com/user-attachments/assets/4f5217cf-8b5a-4111-8ae6-7fa4fe13b0b0" />
 
 ## Install
 
@@ -37,7 +37,7 @@ fails, they download the latest release binary, verify its SHA-256 and install i
 `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\Programs\spacejunk` (Windows, added to your PATH).
 Run the same command again to update.
 
-They also add spacejunk to your app menu, so you can start it without typing a command: it opens
+They also add Spacejunk to your app menu, so you can start it without typing a command: it opens
 in a terminal window on the disk list.
 
 | System | Where |
@@ -46,7 +46,7 @@ in a terminal window on the disk list.
 | macOS | Launchpad / Spotlight (`~/Applications/spacejunk.app`) |
 | Windows | Start Menu |
 
-With Rust you can also run `cargo install spacejunk` directly (or `cargo install --path .` from a checkout);
+With Rust, you can also run `cargo install spacejunk` directly (or `cargo install --path .` from a checkout);
 that installs the command only, without the app menu entry.
 
 ### Uninstall
@@ -189,7 +189,7 @@ cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-CI runs fmt, clippy and the tests on Linux, macOS and Windows.
+CI runs fmt, clippy, and the tests on Linux, macOS and Windows.
 
 ### Releases
 
