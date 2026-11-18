@@ -108,10 +108,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     f.render_widget(title_line(app), title);
 
-    match &mut app.screen {
-        Screen::Disks => draw_disks(f, body, app.disk_selected, &app.disks),
+    app.list_area = match &mut app.screen {
+        Screen::Disks => {
+            let (lines, offset) = draw_disks(f, body, app.disk_selected, &app.disks);
+            app.disk_offset = offset;
+            lines
+        }
         Screen::Tree(view) => draw_tree(f, body, view),
-    }
+    };
     f.render_widget(footer_for(app, foot.width), foot);
 }
 
@@ -179,12 +183,28 @@ fn footer_for(app: &App, width: u16) -> Line<'static> {
     footer(keys, width)
 }
 
-fn draw_disks(f: &mut Frame, area: Rect, selected: usize, disks: &[crate::app::DiskEntry]) {
+/// Where the lines of a bordered list with `header` lines go, for mouse clicks.
+fn lines_area(list: Rect, header: u16) -> Rect {
+    let inner = list.inner(ratatui::layout::Margin::new(1, 1));
+    Rect {
+        y: inner.y + header,
+        height: inner.height.saturating_sub(header),
+        ..inner
+    }
+}
+
+/// Returns where the disk lines are and the first disk shown.
+fn draw_disks(
+    f: &mut Frame,
+    area: Rect,
+    selected: usize,
+    disks: &[crate::app::DiskEntry],
+) -> (Rect, usize) {
     let block = Block::bordered().title(" Select a disk ");
     if disks.is_empty() {
         let text = "No disks found. Press p to type a path.";
         f.render_widget(Paragraph::new(text).block(block), area);
-        return;
+        return (Rect::default(), 0);
     }
     let rows = disks.iter().map(|d| {
         let frac = d.used as f64 / d.total as f64;
@@ -217,6 +237,7 @@ fn draw_disks(f: &mut Frame, area: Rect, selected: usize, disks: &[crate::app::D
     .block(block);
     let mut state = TableState::default().with_selected(Some(selected));
     f.render_stateful_widget(table, area, &mut state);
+    (lines_area(area, 1), state.offset())
 }
 
 fn summary(view: &TreeView) -> Line<'static> {
@@ -246,7 +267,8 @@ fn summary(view: &TreeView) -> Line<'static> {
     }
 }
 
-fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) {
+/// Returns where the lines of the list on screen are.
+fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) -> Rect {
     let [info, list, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
@@ -257,11 +279,13 @@ fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) {
     let total = view.root.size();
     match view.panel.as_deref_mut() {
         Some(Panel::Files(files)) => {
-            return draw_files(f, [list, status], files, &view.path, total);
+            draw_files(f, [list, status], files, &view.path, total);
+            return lines_area(list, 0);
         }
         Some(Panel::Errors(nav)) => {
             let failed = view.progress.failed.lock().unwrap();
-            return draw_errors(f, [list, status], nav, &failed, &view.path);
+            draw_errors(f, [list, status], nav, &failed, &view.path);
+            return lines_area(list, 0);
         }
         None => {}
     }
@@ -280,6 +304,7 @@ fn draw_tree(f: &mut Frame, area: Rect, view: &mut TreeView) {
 
     let path = tree::path_of(&view.root, &view.rows, view.selected);
     f.render_widget(Line::from(format!(" {}", path.display())).dim(), status);
+    lines_area(list, 0)
 }
 
 /// Keeps the selected line inside the `height` visible lines.
@@ -634,6 +659,26 @@ mod tests {
                 assert_eq!(shown(new).1, Color::DarkGray, "x={x}");
             }
         }
+    }
+
+    /// Mouse clicks map a screen line to a list line through `list_area`.
+    #[test]
+    fn list_area_is_where_the_lines_are_drawn() {
+        let mut app = tree_app();
+        let buf = render(&mut app, 80, 12);
+        assert_eq!(app.list_area, Rect::new(1, 3, 78, 6));
+        assert!(lines(&buf)[3].contains("/data/"), "first line at y=3");
+        let disks = vec![DiskEntry {
+            mount: PathBuf::from("/"),
+            device: "/dev/sda1".into(),
+            fs: "ext4".into(),
+            total: GIB,
+            used: 0,
+        }];
+        let mut app = App::for_test(Screen::Disks, disks);
+        let buf = render(&mut app, 100, 7);
+        assert_eq!(app.list_area, Rect::new(1, 3, 98, 2), "below the header");
+        assert!(lines(&buf)[3].contains("/dev/sda1"));
     }
 
     #[test]

@@ -12,7 +12,10 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+};
+use ratatui::crossterm::execute;
 
 use app::App;
 
@@ -56,7 +59,16 @@ fn main() -> ExitCode {
 
 fn tui(start: Option<PathBuf>) -> ExitCode {
     let mut terminal = ratatui::init();
+    // ratatui's panic hook restores the screen but not mouse capture: left
+    // on, every mouse move would print escape codes in the user's shell.
+    let restore_screen = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        restore_screen(info);
+    }));
+    let _ = execute!(io::stdout(), EnableMouseCapture);
     let res = run(&mut terminal, App::new(start));
+    let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     if let Err(e) = res {
         eprintln!("error: {e}");
@@ -74,11 +86,12 @@ fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
         } else {
             Duration::from_secs(1)
         };
-        if event::poll(timeout)?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.on_key(key);
+        if event::poll(timeout)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key),
+                Event::Mouse(mouse) => app.on_mouse(mouse),
+                _ => {}
+            }
         }
     }
     Ok(())
