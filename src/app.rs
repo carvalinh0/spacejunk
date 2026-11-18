@@ -46,7 +46,7 @@ pub struct TreeView {
 }
 
 /// How many lines a list built from the tree keeps.
-const LIST_LIMIT: usize = 1000;
+pub const LIST_LIMIT: usize = 1000;
 /// Such a list walks the whole tree, so a running scan refreshes it this
 /// often, not every frame.
 const LIST_REFRESH: Duration = Duration::from_secs(1);
@@ -70,10 +70,14 @@ pub struct ListNav {
 pub enum ListKind {
     LargestFiles,
     Junk,
+    /// Names containing `ListView::query` (`/`).
+    Search,
 }
 
 pub struct ListView {
     pub kind: ListKind,
+    /// What a search looks for; empty for the other kinds.
+    pub query: String,
     /// Largest first.
     pub items: Vec<Listed>,
     pub nav: ListNav,
@@ -97,6 +101,8 @@ pub struct App {
     pub notice: Option<String>,
     /// Waiting for `y` to move this to the trash.
     pub confirm: Option<Removal>,
+    /// Typing a search (`/`): keys edit `ListView::query`.
+    pub searching: bool,
     /// A newer version published on crates.io, once the background check answers.
     pub update: Option<String>,
     pub quit: bool,
@@ -200,6 +206,7 @@ impl App {
             message: None,
             notice: None,
             confirm: None,
+            searching: false,
             update: None,
             quit: false,
             list_area: Rect::default(),
@@ -261,6 +268,10 @@ impl App {
             self.on_key_input(key.code);
             return;
         }
+        if self.searching {
+            self.on_key_search(key.code);
+            return;
+        }
         match self.screen {
             Screen::Disks => self.on_key_disks(key.code),
             Screen::Tree(_) => self.on_key_tree(key.code),
@@ -271,7 +282,7 @@ impl App {
     /// selected line does what Enter does (open a folder, scan a disk). In
     /// terminals that report no pointer moves, the first click selects.
     pub fn on_mouse(&mut self, m: MouseEvent) {
-        if self.input.is_some() || self.confirm.is_some() {
+        if self.input.is_some() || self.confirm.is_some() || self.searching {
             return;
         }
         let key = |code: KeyCode| KeyEvent::from(code);
@@ -323,6 +334,26 @@ impl App {
         }
     }
 
+    /// Typing a search: the results follow every key.
+    fn on_key_search(&mut self, code: KeyCode) {
+        let Screen::Tree(view) = &mut self.screen else {
+            self.searching = false;
+            return;
+        };
+        match code {
+            KeyCode::Enter => self.searching = false,
+            KeyCode::Esc => {
+                self.searching = false;
+                view.panel = None;
+            }
+            KeyCode::Char(c) => view.edit_search(|q| q.push(c)),
+            KeyCode::Backspace => view.edit_search(|q| {
+                q.pop();
+            }),
+            _ => {}
+        }
+    }
+
     fn on_key_input(&mut self, code: KeyCode) {
         let Some(text) = &mut self.input else {
             return;
@@ -364,6 +395,10 @@ impl App {
                 self.reveal(&path, is_dir);
             }
             KeyCode::Char(key @ ('f' | 'c' | 'e')) => view.switch_panel(key),
+            KeyCode::Char('/') => {
+                view.start_search();
+                self.searching = true;
+            }
             KeyCode::Char('d') => {
                 let path = tree::path_of(&view.root, &view.rows, view.selected);
                 self.ask_removal(path);
@@ -380,6 +415,10 @@ impl App {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc | KeyCode::Char('b' | 'h') | KeyCode::Left => view.panel = None,
             KeyCode::Char(key @ ('f' | 'c' | 'e')) => view.switch_panel(key),
+            KeyCode::Char('/') => {
+                view.start_search();
+                self.searching = true;
+            }
             KeyCode::Char('r') => self.rescan(),
             // Both lists hold things to find in their folder: a file, or a
             // folder that cannot be opened.
@@ -557,8 +596,11 @@ impl TreeView {
     /// the one already open.
     fn switch_panel(&mut self, key: char) {
         let open = match self.panel.as_deref() {
-            Some(Panel::List(l)) if l.kind == ListKind::LargestFiles => 'f',
-            Some(Panel::List(_)) => 'c',
+            Some(Panel::List(l)) => match l.kind {
+                ListKind::LargestFiles => 'f',
+                ListKind::Junk => 'c',
+                ListKind::Search => '/',
+            },
             Some(Panel::Errors(_)) => 'e',
             None => ' ',
         };
@@ -569,6 +611,27 @@ impl TreeView {
             'c' => Some(Box::new(list(ListKind::Junk))),
             _ => Some(Box::new(Panel::Errors(ListNav::new()))),
         };
+    }
+
+    /// `/`: opens an empty search, or goes back to the open one.
+    fn start_search(&mut self) {
+        let open =
+            matches!(self.panel.as_deref(), Some(Panel::List(l)) if l.kind == ListKind::Search);
+        if !open {
+            let search = ListView::new(ListKind::Search, &self.root);
+            self.panel = Some(Box::new(Panel::List(search)));
+        }
+    }
+
+    fn edit_search(&mut self, edit: impl FnOnce(&mut String)) {
+        if let Some(Panel::List(l)) = self.panel.as_deref_mut()
+            && l.kind == ListKind::Search
+        {
+            edit(&mut l.query);
+            l.items = tree::search(&self.root, &l.query, LIST_LIMIT);
+            l.nav.selected = 0;
+            l.nav.offset = 0;
+        }
     }
 
     fn panel_selection(&self) -> Option<PathBuf> {
@@ -668,16 +731,18 @@ impl ListView {
     fn new(kind: ListKind, root: &Node) -> Self {
         ListView {
             kind,
-            items: Self::build(kind, root),
+            query: String::new(),
+            items: Self::build(kind, root, ""),
             nav: ListNav::new(),
             built: Instant::now(),
         }
     }
 
-    fn build(kind: ListKind, root: &Node) -> Vec<Listed> {
+    fn build(kind: ListKind, root: &Node, query: &str) -> Vec<Listed> {
         match kind {
             ListKind::LargestFiles => tree::largest_files(root, LIST_LIMIT),
             ListKind::Junk => tree::junk_folders(root, LIST_LIMIT),
+            ListKind::Search => tree::search(root, query, LIST_LIMIT),
         }
     }
 
@@ -685,7 +750,7 @@ impl ListView {
     fn rebuild(&mut self, root: &Node) {
         let nav = &mut self.nav;
         let keep = self.items.get(nav.selected).map(|i| i.path.clone());
-        self.items = Self::build(self.kind, root);
+        self.items = Self::build(self.kind, root, &self.query);
         self.built = Instant::now();
         let found = keep.and_then(|k| self.items.iter().position(|i| i.path == k));
         nav.selected = found
@@ -732,6 +797,7 @@ impl App {
             message: None,
             notice: None,
             confirm: None,
+            searching: false,
             update: None,
             quit: false,
             list_area: Rect::default(),
@@ -1044,6 +1110,52 @@ mod tests {
         assert_eq!(tree(&app).root.size(), 0);
         app.on_key(KeyCode::Char('c').into());
         assert!(tree(&app).panel.is_none(), "c again closes it");
+    }
+
+    fn search_results(app: &App) -> Option<Vec<String>> {
+        match tree(app).panel.as_deref() {
+            Some(Panel::List(l)) if l.kind == ListKind::Search => Some(file_names(l)),
+            _ => None,
+        }
+    }
+
+    fn type_keys(app: &mut App, keys: &str) {
+        for c in keys.chars() {
+            app.on_key(KeyCode::Char(c).into());
+        }
+    }
+
+    #[test]
+    fn slash_searches_as_you_type() {
+        let mut app = trash_app(); // /r: a/ (big), small
+        type_keys(&mut app, "/");
+        assert!(app.searching);
+        assert_eq!(search_results(&app), Some(vec![]));
+        type_keys(&mut app, "BI");
+        assert_eq!(search_results(&app), Some(vec!["big".to_owned()]));
+        app.on_key(KeyCode::Backspace.into());
+        app.on_key(KeyCode::Backspace.into());
+        type_keys(&mut app, "a");
+        let both = vec!["a".to_owned(), "small".to_owned()];
+        assert_eq!(search_results(&app), Some(both));
+    }
+
+    #[test]
+    fn enter_browses_the_results_slash_edits_esc_cancels() {
+        let mut app = trash_app();
+        type_keys(&mut app, "/a");
+        app.on_key(KeyCode::Enter.into());
+        assert!(!app.searching, "Enter keeps the results to browse");
+        app.on_key(KeyCode::Down.into());
+        let Some(Panel::List(l)) = tree(&app).panel.as_deref() else {
+            panic!("results closed")
+        };
+        assert_eq!(l.nav.selected, 1);
+        type_keys(&mut app, "/");
+        assert!(app.searching, "/ edits the search again");
+        app.on_key(KeyCode::Esc.into());
+        assert!(!app.searching);
+        assert!(tree(&app).panel.is_none(), "Esc while typing cancels");
     }
 
     #[test]

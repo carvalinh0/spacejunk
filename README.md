@@ -113,6 +113,7 @@ below has them all.
 | `←` / `h` | close folder (or jump to the parent) |
 | `Enter` / `Space` | open/close |
 | `o` | show the selected folder or file in the file manager (Explorer, Finder, or the desktop's default on Linux) |
+| `/` | search: files and folders whose name contains what you type (any case), largest first, updated as you type. `Enter` browses the results (`o`, `d` work there), `/` edits the search, `Esc` cancels |
 | `f` | largest files: the 1000 biggest files of the scan in one list (`o` shows one, `f`/`Esc` back to the tree) |
 | `c` | junk: caches, build folders and temporary files that programs rebuild when needed, largest first (`d` moves one to the trash, `c`/`Esc` back to the tree). Junk folders are also marked in the tree |
 | `e` | folders that could not be read, with the reason (`o` shows one, `e`/`Esc` back to the tree) |
